@@ -1,0 +1,91 @@
+from __future__ import annotations
+from dataclasses import dataclass
+import numpy as np
+import scipy.sparse as sp
+
+T = np.int8  # ternary carrier in {-1,0,+1}
+
+def sgn_deadzone(x: np.ndarray, eps: float = 1e-9) -> np.ndarray:
+    out = np.zeros_like(x, dtype=T)
+    out[x > eps] = 1
+    out[x < -eps] = -1
+    return out
+
+@dataclass
+class GraphCarrier:
+    # adjacency per channel or a single adjacency; store as sparse for scale
+    A: sp.csr_matrix              # shape (N, N), weights >=0 (or residual weights)
+    channels: int = 1
+
+@dataclass
+class KernelParams:
+    hops: int = 1                 # neighborhood depth
+    channel_coupling: np.ndarray | None = None  # shape (C,C)
+    deadzone: float = 0.0
+
+def k_hop_adj(A: sp.csr_matrix, hops: int) -> sp.csr_matrix:
+    # crude: multiply adjacency; for large graphs replace with BFS neighborhoods or precomputed kNN
+    M = A.copy()
+    cur = A
+    for _ in range(1, hops):
+        cur = cur @ A
+        cur.data = np.clip(cur.data, 0, None)
+        M = M + cur
+    M.eliminate_zeros()
+    return M
+
+def kernel_step(carrier: GraphCarrier, s: np.ndarray, params: KernelParams) -> np.ndarray:
+    """
+    s: shape (N,C) in {-1,0,+1}
+    returns: shape (N,C) ternary
+    """
+    N, C = s.shape
+    assert C == carrier.channels
+
+    Nh = k_hop_adj(carrier.A, params.hops)
+
+    if C == 1:
+        agg = Nh @ s[:, 0].astype(np.float32)
+        return sgn_deadzone(agg, params.deadzone)[:, None]
+
+    # multi-channel: aggregate per channel then mix channels
+    agg = np.zeros((N, C), dtype=np.float32)
+    for c in range(C):
+        agg[:, c] = Nh @ s[:, c].astype(np.float32)
+
+    if params.channel_coupling is not None:
+        agg = agg @ params.channel_coupling.T
+
+    return sgn_deadzone(agg, params.deadzone).astype(T)
+
+def kernel_flow(carrier: GraphCarrier, s0: np.ndarray, params: KernelParams, steps: int = 20):
+    s = s0.astype(T, copy=True)
+    history = []
+    for _ in range(steps):
+        s_next = kernel_step(carrier, s, params)
+        E = int(np.sum(s_next != s))
+        history.append((E, s_next.copy()))
+        s = s_next
+        if E == 0:
+            break
+    return s, history
+
+# ---- you provide these two pieces for your dataset ----
+
+def build_initial_ternary_state_from_residuals(residual_A: sp.csr_matrix, deadzone: float) -> np.ndarray:
+    # simplest single-channel: sign of row-sum residual as node-state
+    node_res = np.asarray(residual_A.sum(axis=1)).reshape(-1)
+    return sgn_deadzone(node_res, deadzone)[:, None]
+
+def coarse_grain_blocks(s: np.ndarray, blocks: np.ndarray) -> np.ndarray:
+    """
+    blocks: int array of length N mapping node -> block id in [0..B-1]
+    returns: s_coarse shape (B,C) via sum then sgn (your R_j rule)
+    """
+    N, C = s.shape
+    B = int(blocks.max()) + 1
+    out = np.zeros((B, C), dtype=np.float32)
+    for c in range(C):
+        np.add.at(out[:, c], blocks, s[:, c].astype(np.float32))
+    return sgn_deadzone(out, 0.0).astype(T)
+

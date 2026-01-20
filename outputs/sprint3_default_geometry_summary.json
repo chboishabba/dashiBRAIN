@@ -1,0 +1,152 @@
+{
+  "graph": {
+    "nodes": 179907,
+    "edges": 7084254
+  },
+  "state": {
+    "+1": 137901,
+    "0": 42006,
+    "-1": 0
+  },
+  "components": {
+    "count": 8,
+    "sizes_desc": [
+      137879,
+      6,
+      6,
+      2,
+      2,
+      2,
+      2,
+      2
+    ]
+  },
+  "distances": {
+    "neutral": {
+      "count": 41909,
+      "min": 1,
+      "max": 4,
+      "percentiles": {
+        "0": 1.0,
+        "25": 1.0,
+        "50": 1.0,
+        "75": 1.0,
+        "90": 1.0,
+        "95": 1.0,
+        "99": 1.0
+      },
+      "by_distance": {
+        "1": 41690,
+        "2": 210,
+        "3": 8,
+        "4": 1
+      }
+    },
+    "defect": {
+      "count": 638,
+      "min": 1,
+      "max": 3,
+      "percentiles": {
+        "0": 1.0,
+        "25": 1.0,
+        "50": 1.0,
+        "75": 2.0,
+        "90": 2.0,
+        "95": 2.0,
+        "99": 2.0
+      },
+      "by_distance": {
+        "1": 441,
+        "2": 193,
+        "3": 4
+      }
+    },
+    "unreached_neutral": 97,
+    "unreached_defect": 39
+  },
+  "component_affiliation": {
+    "neutral": {
+      "0": 41899,
+      "1": 3,
+      "2": 4,
+      "7": 3
+    },
+    "defect": {
+      "0": 634,
+      "2": 2,
+      "7": 2
+    }
+  },
+  "boundary": {
+    "neutral_d1": 41690,
+    "neutral_multi_component": 0,
+    "defect_multi_component": 0,
+    "multi_component_pairs_top": []
+  },
+  "component_summary": [
+    {
+      "component": 0,
+      "size": 137879,
+      "neutral": 41899,
+      "neutral_d1": 41684,
+      "defect": 634,
+      "defect_d1": 440
+    },
+    {
+      "component": 2,
+      "size": 6,
+      "neutral": 4,
+      "neutral_d1": 2,
+      "defect": 2,
+      "defect_d1": 0
+    },
+    {
+      "component": 3,
+      "size": 6,
+      "neutral": 0,
+      "neutral_d1": 0,
+      "defect": 0,
+      "defect_d1": 0
+    },
+    {
+      "component": 1,
+      "size": 2,
+      "neutral": 3,
+      "neutral_d1": 3,
+      "defect": 0,
+      "defect_d1": 0
+    },
+    {
+      "component": 4,
+      "size": 2,
+      "neutral": 0,
+      "neutral_d1": 0,
+      "defect": 0,
+      "defect_d1": 0
+    },
+    {
+      "component": 5,
+      "size": 2,
+      "neutral": 0,
+      "neutral_d1": 0,
+      "defect": 0,
+      "defect_d1": 0
+    },
+    {
+      "component": 6,
+      "size": 2,
+      "neutral": 0,
+      "neutral_d1": 0,
+      "defect": 0,
+      "defect_d1": 0
+    },
+    {
+      "component": 7,
+      "size": 2,
+      "neutral": 3,
+      "neutral_d1": 1,
+      "defect": 2,
+      "defect_d1": 1
+    }
+  ]
+}
