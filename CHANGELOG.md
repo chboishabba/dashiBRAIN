@@ -14,3 +14,5 @@
 - Added hop-radius coarse-grain utility (`scripts/renormalize_hop_radius.py`) with r=1,2 runs collapsing defect to zero in one step, further localizing constraints to finer-than-radius neighborhoods.
 - Added voxel coarse-grain utility (`scripts/renormalize_voxel.py`); current metadata lacks soma coords so voxel run is degenerate until a coordinate-rich export is produced.
 - Clarified formal regimes (atomic → affine → nonlinear → exploded) in `docs/formal_axioms.md`, noting that exploded structure only persists when locality is preserved.
+- Added `docs/nonlinear-sparsity.md` with exact threshold-sparsification, fixed-point margin, and conditional defect-bound theorems; contrasted DASHI with ℓ1 and ReLU sparsity and formalized kernel closure as a weighted threshold CSP.
+- Added `dashi.analysis.nonlinear_sparsity` and tests for ternary projection, fixed-point/CSP diagnostics, margins, exploded support/components, and transition-defect extraction.
