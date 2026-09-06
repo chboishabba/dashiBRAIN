@@ -23,6 +23,7 @@ from dashi.analysis.consumer_evidence import (
 )
 from dashi.analysis.embodied import (
     DROSOPHILA_CALCIUM_SOURCE,
+    FICTRAC_METHOD_SOURCE,
     MALE_CNS_SOURCE,
     ScientificSource,
 )
@@ -52,11 +53,6 @@ GAUTHEY_WHOLE_BRAIN_SOURCE = ScientificSource(
     "doi:10.1038/s41467-026-72437-1",
 )
 
-MURTHY_FICTRAC_BEHAVIOUR_SOURCE = ScientificSource(
-    "Murthy Lab / Gauthey et al.",
-    "Acoustic stimulus and ball-tracking kinematic traces",
-    "doi:10.1038/s41467-026-72437-1",
-)
 
 
 @dataclass(frozen=True)
@@ -86,6 +82,8 @@ ROOT_GAUTHEY_PREPROCESSING = ProvenanceRoot("prep:lightbead-dff", RootKind.PREPR
 
 ROOT_BIFROST_REGISTRATION = ProvenanceRoot("reg:bifrost-jrc2018", RootKind.REGISTRATION, BIFROST_SOURCE.stable_identifier)
 ROOT_MOTOR_TARGETING = ProvenanceRoot("dataset:azevedo-lesser-vnc", RootKind.DATASET, AZEVEDO_MOTOR_ATLAS_SOURCE.stable_identifier)
+ROOT_FICTRAC_METHOD = ProvenanceRoot("method:fictrac-spherical-motion", RootKind.OBSERVER_PROTOCOL, FICTRAC_METHOD_SOURCE.stable_identifier)
+
 
 
 
@@ -184,16 +182,17 @@ CANONICAL_ARTIFACT_SPECS: dict[str, ArtifactSpec] = {
         relative_path="behaviour/gauthey_trial01_fictrac_kinematics.csv",
         download_url="https://doi.org/10.1038/s41467-026-72437-1",
         expected_size_bytes=22_000_000,
-        source=MURTHY_FICTRAC_BEHAVIOUR_SOURCE,
+        source=GAUTHEY_WHOLE_BRAIN_SOURCE,
         dataset_version="gauthey-fictrac-2026",
         provenance_roots=(
             ROOT_GAUTHEY_DATASET,
             ROOT_GAUTHEY_ANIMAL,
             ROOT_GAUTHEY_TRIAL,
-            ProvenanceRoot("acq:fictrac-spherical-treadmill", RootKind.ACQUISITION, "method:fictrac-optical-mouse"),
+            ROOT_FICTRAC_METHOD,
         ),
-        description="Synchronized spherical treadmill ball velocities (forward, sideslip, yaw) and acoustic trigger stamps",
+        description="Synchronized spherical treadmill ball velocities extracted via FicTrac (Moore et al. 2014) from Gauthey et al. 2026",
     ),
+
 }
 
 

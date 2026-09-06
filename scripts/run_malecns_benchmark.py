@@ -15,9 +15,17 @@ from dashi.analysis.benchmark import (
     dashi_beats_baseline,
     mean_numeric_residual,
 )
+from dashi.analysis.benchmark_promotion import (
+    BenchmarkRunMode,
+    PromotionLevel,
+    RunEvidenceStatus,
+    consumer_promotable_for_run,
+    result_wording,
+)
 from dashi.analysis.consumer_evidence import (
     EvidenceConsumer,
 )
+
 from dashi.analysis.embodied import MALE_CNS_SOURCE
 from dashi.analysis.provenance_dependence import (
     EvidenceRelation,
@@ -129,23 +137,49 @@ def run_benchmark(
         EvidenceRelation.CROSS_DATASET_REPLICATION,
     ), "Connectome and optical imaging must be cross-animal/dataset replication!"
 
-    # 4. Consumer-Indexed Evidence Promotion
-    print("\n--- Consumer-Indexed Promotion Policy Checks ---")
+    # 4. Consumer-Indexed Evidence Promotion & Run Authority
+    print("\n--- Consumer-Indexed Promotion Policy & Run Authority Checks ---")
+    if mock_run:
+        mode = BenchmarkRunMode.MOCK
+    elif not is_real:
+        mode = BenchmarkRunMode.SYNTHETIC
+    else:
+        mode = BenchmarkRunMode.REAL_HASH_VERIFIED
+
+    run_status = RunEvidenceStatus(
+        mode=mode,
+        input_hashes_verified=is_real,
+        registration_verified=is_real,
+        held_out_split_verified=True,
+        output_hash_verified=is_real,
+        same_trial_only=False,
+        synthetic_observations_present=mock_run or not is_real,
+    )
+
+    print(f"  Run authority: {run_status.promotion_level.value} ({result_wording(run_status)})")
+
     bundles = manifest.build_consumer_bundles(
         dependence_relation=rel_cross_animal,
         provenance_adequate=True,
     )
 
+    consumer_results = {}
 
-    status_struct_func = bundles[EvidenceConsumer.STRUCTURE_FUNCTION].promotable
-    status_effector = bundles[EvidenceConsumer.EFFECTOR_STATE].promotable
-    status_behaviour = bundles[EvidenceConsumer.BEHAVIOUR].promotable
-    status_semantic = bundles[EvidenceConsumer.SEMANTIC].promotable
-
-    print(f"  Consumer STRUCTURE_FUNCTION Promotable: {status_struct_func}")
-    print(f"  Consumer EFFECTOR_STATE Promotable:     {status_effector}")
-    print(f"  Consumer BEHAVIOUR Promotable:          {status_behaviour}")
-    print(f"  Consumer SEMANTIC Promotable:           {status_semantic}")
+    for c in (
+        EvidenceConsumer.STRUCTURE_FUNCTION,
+        EvidenceConsumer.EFFECTOR_STATE,
+        EvidenceConsumer.BEHAVIOUR,
+        EvidenceConsumer.SEMANTIC,
+    ):
+        bundle = bundles[c]
+        policy_suff = bundle.promotable
+        emp_prom = consumer_promotable_for_run(bundle, run_status)
+        consumer_results[c.value] = {
+            "policy_sufficient": policy_suff,
+            "empirically_promotable": emp_prom,
+        }
+        print(f"  {c.value.upper()} policy sufficient: {policy_suff}")
+        print(f"  {c.value.upper()} empirical promotion: {emp_prom}")
 
     # Enforce non-leakage firewall: same-trial corroboration alone cannot promote semantic consumer
     same_trial_bundles = manifest.build_consumer_bundles(
@@ -158,6 +192,8 @@ def run_benchmark(
         "status": "success",
         "mock_run": mock_run,
         "is_real_connectome": is_real,
+        "run_authority": run_status.promotion_level.value,
+        "run_wording": result_wording(run_status),
         "split_receipt": {
             "split_sha256": split_receipt.split_artifact_sha256,
             "train_count": len(train_ids),
@@ -173,14 +209,9 @@ def run_benchmark(
             "calcium_vs_kinematics": rel_same_trial.value,
             "connectome_vs_calcium": rel_cross_animal.value,
         },
-
-        "consumer_promotions": {
-            "structure_function": status_struct_func,
-            "effector_state": status_effector,
-            "behaviour": status_behaviour,
-            "semantic": status_semantic,
-        },
+        "consumer_promotions": consumer_results,
     }
+
 
     if output_path:
         out = Path(output_path)
