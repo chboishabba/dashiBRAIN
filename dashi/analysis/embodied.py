@@ -67,6 +67,12 @@ DROSOPHILA_CALCIUM_SOURCE = ScientificSource(
     "doi:10.1038/s41467-026-72437-1",
 )
 
+FICTRAC_METHOD_SOURCE = ScientificSource(
+    "Moore, Taylor, Paulk, Pearson, van Swinderen, Srinivasan",
+    "FicTrac: a visual method for tracking spherical motion and generating fictive animal paths",
+    "doi:10.1016/j.jneumeth.2014.01.010",
+)
+
 
 @dataclass(frozen=True)
 class NodeAnnotation:
