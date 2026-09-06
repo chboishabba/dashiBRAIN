@@ -9,7 +9,7 @@ def test_same_cluster_integer_on_different_planes_remains_distinct():
         [0, 0, 1, 1],
         [0, 1, 0, 1],
     ])
-    spatial_shape = (2, 2, 2)
+    spatial_shape = (2, 4, 1)
     centroids = plane_local_centroids(labels, spatial_shape, np.eye(4))
     keys = {(c.plane_index, c.cluster_index) for c in centroids}
     assert keys == {(0, 0), (0, 1), (1, 0), (1, 1)}
