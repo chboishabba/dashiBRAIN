@@ -1,15 +1,15 @@
 """Real-data structure/function benchmark kernels for MaleCNS.
 
 This module replaces hash-derived mock features with sparse-connectome features,
-region aggregation, measured functional correlations, and explicit null models.
-It is agnostic to the precise registration file format: callers provide a
-region/unit mapping after loading and validating that artifact.
+region aggregation, measured functional correlations, and explicit train/held-out
+separation. Fitting/scaling is performed only on training region pairs; held-out
+pairs are reserved exclusively for evaluation.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping, Sequence
+from typing import Sequence
 
 import numpy as np
 import scipy.sparse as sp
@@ -38,6 +38,8 @@ class StructureFunctionResult:
     direct_prediction: np.ndarray
     path_prediction: np.ndarray
     dashi_prediction: np.ndarray
+    fit_pair_count: int
+    held_out_pair_count: int
 
     @property
     def mean_direct(self) -> float:
@@ -92,7 +94,6 @@ def aggregate_connectome_by_region(
 
     direct_sparse = membership @ adjacency.tocsr() @ membership.T
     direct = np.asarray(direct_sparse.toarray(), dtype=float)
-    # Normalize region-pair weights by possible source/target node counts.
     region_sizes = np.asarray(membership.sum(axis=1)).ravel()
     denom = np.outer(region_sizes, region_sizes)
     denom[denom == 0] = 1.0
@@ -125,18 +126,34 @@ def functional_correlation(traces: np.ndarray, unit_ids: Sequence[str]) -> Funct
     return FunctionalAssociation(tuple(unit_ids), corr)
 
 
-def _scale_to_observed(feature: np.ndarray, observed: np.ndarray, mask: np.ndarray) -> np.ndarray:
-    f = feature[mask]
-    y = observed[mask]
+def _scale_to_observed(feature: np.ndarray, observed: np.ndarray, fit_mask: np.ndarray) -> np.ndarray:
+    f = feature[fit_mask]
+    y = observed[fit_mask]
     denom = float(np.dot(f, f))
     beta = float(np.dot(f, y) / denom) if denom > 0 else 0.0
     return beta * feature
+
+
+def pairwise_train_holdout_masks(n: int, *, modulus: int = 3, held_out_residue: int = 0) -> tuple[np.ndarray, np.ndarray]:
+    """Deterministic disjoint upper-triangle train/held-out pair masks."""
+    if n < 2:
+        raise ValueError("at least two units are required")
+    if modulus < 2:
+        raise ValueError("modulus must be >= 2")
+    upper = np.triu(np.ones((n, n), dtype=bool), k=1)
+    ii, jj = np.indices((n, n))
+    held = upper & (((ii + jj) % modulus) == held_out_residue)
+    train = upper & ~held
+    if not np.any(train) or not np.any(held):
+        raise ValueError("split must select at least one train and one held-out pair")
+    return train, held
 
 
 def evaluate_region_structure_function(
     structural: RegionStructuralFeatures,
     functional: FunctionalAssociation,
     *,
+    fit_mask: np.ndarray | None = None,
     held_out_mask: np.ndarray | None = None,
     dashi_direct_weight: float = 0.5,
     dashi_path_weight: float = 0.4,
@@ -148,13 +165,29 @@ def evaluate_region_structure_function(
     observed = np.asarray(functional.matrix, dtype=float)
     n = observed.shape[0]
     upper = np.triu(np.ones((n, n), dtype=bool), k=1)
-    mask = upper if held_out_mask is None else (upper & np.asarray(held_out_mask, dtype=bool))
-    if not np.any(mask):
+
+    if fit_mask is None and held_out_mask is None:
+        fit, held = pairwise_train_holdout_masks(n)
+    elif fit_mask is None:
+        held = upper & np.asarray(held_out_mask, dtype=bool)
+        fit = upper & ~held
+    elif held_out_mask is None:
+        fit = upper & np.asarray(fit_mask, dtype=bool)
+        held = upper & ~fit
+    else:
+        fit = upper & np.asarray(fit_mask, dtype=bool)
+        held = upper & np.asarray(held_out_mask, dtype=bool)
+
+    if np.any(fit & held):
+        raise ValueError("fit and held-out masks must be disjoint")
+    if not np.any(fit):
+        raise ValueError("fit mask selects no region pairs")
+    if not np.any(held):
         raise ValueError("held-out mask selects no region pairs")
 
-    direct = _scale_to_observed(structural.direct, observed, mask)
+    direct = _scale_to_observed(structural.direct, observed, fit)
     path_raw = structural.direct + structural.two_hop
-    path = _scale_to_observed(path_raw, observed, mask)
+    path = _scale_to_observed(path_raw, observed, fit)
 
     signed = structural.signed_direct if structural.signed_direct is not None else np.zeros_like(structural.direct)
     dashi_raw = (
@@ -162,14 +195,16 @@ def evaluate_region_structure_function(
         + dashi_path_weight * structural.two_hop
         + dashi_signed_weight * signed
     )
-    dashi = _scale_to_observed(dashi_raw, observed, mask)
+    dashi = _scale_to_observed(dashi_raw, observed, fit)
 
     return StructureFunctionResult(
-        np.abs(direct[mask] - observed[mask]),
-        np.abs(path[mask] - observed[mask]),
-        np.abs(dashi[mask] - observed[mask]),
-        observed[mask],
-        direct[mask],
-        path[mask],
-        dashi[mask],
+        direct_residuals=np.abs(direct[held] - observed[held]),
+        path_residuals=np.abs(path[held] - observed[held]),
+        dashi_residuals=np.abs(dashi[held] - observed[held]),
+        observed=observed[held],
+        direct_prediction=direct[held],
+        path_prediction=path[held],
+        dashi_prediction=dashi[held],
+        fit_pair_count=int(np.sum(fit)),
+        held_out_pair_count=int(np.sum(held)),
     )
