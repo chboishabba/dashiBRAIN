@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 from dashi.io.gauthey_2p_source_recovery import TWO_P_TRIAL_SPECS
 from dashi.io.gauthey_compact import GAUTHEY_DATA_ZIP_URL
+from dashi.io.gauthey_payment_frontier import classify_deposit_source_resolution
 from dashi.io.remote_zip import list_remote_zip
 
 
@@ -48,11 +50,18 @@ def main() -> None:
 
     payload = {
         "archive_url": GAUTHEY_DATA_ZIP_URL,
+        "archive_member_count": len(members),
         "required_source_files": required,
         "all_required_uniquely_resolved": all_unique,
         "resolved": resolved,
         "boundary": "basename resolution establishes archive identity only; it does not prove trace-row recovery",
     }
+    frontier = classify_deposit_source_resolution(payload)
+    payload["payment_frontier"] = {
+        **asdict(frontier),
+        "payment_a_route": frontier.payment_a_route.value,
+    }
+
     print(json.dumps(payload, indent=2))
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
