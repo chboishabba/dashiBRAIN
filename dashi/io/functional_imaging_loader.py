@@ -1,8 +1,7 @@
 """Load registered Drosophila functional traces and mapping tables.
 
-The loaders are deliberately schema-adaptive but conservative: column names are
-resolved from known aliases, and ambiguous identity is never upgraded to direct
-neuron identity merely because coordinates or regions overlap.
+The loaders are schema-adaptive but conservative: ambiguous archive indices,
+coordinates or regions are never upgraded to direct neuron identity.
 """
 
 from __future__ import annotations
@@ -21,6 +20,7 @@ class FunctionalTraceTable:
     unit_ids: tuple[str, ...]
     traces: np.ndarray  # time x unit
     time: np.ndarray | None = None
+    identity_kind: str = "declared_unit_id"
 
 
 @dataclass(frozen=True)
@@ -45,7 +45,18 @@ def _first_present(columns: Sequence[str], aliases: Sequence[str]) -> str | None
 
 
 def load_functional_traces(path: str | Path) -> FunctionalTraceTable:
-    table = _read_table(path)
+    p = Path(path)
+    if p.suffix.lower() in {".pkl", ".pickle"}:
+        from dashi.io.gauthey_compact import load_audio_correlated_pickle
+        matrix = load_audio_correlated_pickle(p)
+        return FunctionalTraceTable(
+            matrix.unit_ids,
+            matrix.traces,
+            None,
+            identity_kind=matrix.identity_kind,
+        )
+
+    table = _read_table(p)
     cols = list(table)
     if not cols:
         raise ValueError("functional table is empty")
@@ -54,7 +65,6 @@ def load_functional_traces(path: str | Path) -> FunctionalTraceTable:
     unit_col = _first_present(cols, ("unit_id", "roi_id", "region", "neuropil", "cell_id"))
     value_col = _first_present(cols, ("dff", "df_f", "delta_f_over_f", "value", "activity"))
 
-    # Long format: time, unit, value.
     if time_col and unit_col and value_col:
         times = sorted({float(x) for x in table[time_col]})
         units = sorted({str(x) for x in table[unit_col]})
@@ -63,13 +73,11 @@ def load_functional_traces(path: str | Path) -> FunctionalTraceTable:
         traces = np.full((len(times), len(units)), np.nan, dtype=float)
         for t, u, v in zip(table[time_col], table[unit_col], table[value_col]):
             traces[ti[float(t)], ui[str(u)]] = float(v)
-        # Missing samples are conservative zero after centering-compatible fill.
         col_mean = np.nanmean(traces, axis=0)
         inds = np.where(np.isnan(traces))
         traces[inds] = np.take(np.nan_to_num(col_mean, nan=0.0), inds[1])
         return FunctionalTraceTable(tuple(units), traces, np.asarray(times, dtype=float))
 
-    # Wide format: optional time column followed by one numeric column per unit.
     value_columns = [c for c in cols if c != time_col]
     if len(value_columns) < 2:
         raise ValueError("functional table must contain at least two units")
@@ -125,4 +133,4 @@ def aggregate_functional_traces_by_region(
         raise ValueError("registration supplies no functional-to-region mappings")
     regions = tuple(sorted(groups))
     traces = np.column_stack([np.mean(functional.traces[:, groups[r]], axis=1) for r in regions])
-    return FunctionalTraceTable(regions, traces, functional.time)
+    return FunctionalTraceTable(regions, traces, functional.time, identity_kind="registered_region")
