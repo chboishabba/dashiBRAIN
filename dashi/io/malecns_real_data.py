@@ -15,14 +15,6 @@ from dashi.io.artifact_verification import ArtifactAuthority
 
 @dataclass(frozen=True)
 class UpstreamRepositoryArtifact:
-    """Concrete repository file discovered during data-resolution work.
-
-    This is intentionally distinct from ``ArtifactAuthority``: an upstream file
-    can be source-authoritative while still requiring a derived/adapted benchmark
-    artifact (for example a large BIFROST transform rather than a compact region
-    registration table).
-    """
-
     repository_identifier: str
     filename: str
     size_bytes: int
@@ -30,7 +22,6 @@ class UpstreamRepositoryArtifact:
     role: str
 
 
-# Tier-1 hashes are receipts from the canonical MaleCNS v1.0 object downloads.
 MALECNS_REAL_AUTHORITIES: dict[str, ArtifactAuthority] = {
     "connectome_weights_significant": ArtifactAuthority(
         key="connectome_weights_significant",
@@ -55,27 +46,22 @@ MALECNS_REAL_AUTHORITIES: dict[str, ArtifactAuthority] = {
     ),
     "functional_trial_calcium": ArtifactAuthority(
         key="functional_trial_calcium",
-        repository_identifier="doi:10.5281/zenodo.17618684",
-        # The repository contains Data.zip (~48.75 GB). A compact benchmark
-        # trace file must be resolved/extracted before this key can be verified.
-        resolved_filename=None,
+        repository_identifier="doi:10.5281/zenodo.17618684;archive:Data.zip",
+        resolved_filename="Data/Dffs/Audio correlated/dffs_audio_2p_corr_top05_all.pkl",
+        # The exact archive member is now resolved. Its SHA-256 is deliberately
+        # left unset until selective materialisation computes a content digest.
+        expected_sha256=None,
         direct_download=False,
     ),
     "registration_bifrost_map": ArtifactAuthority(
         key="registration_bifrost_map",
         repository_identifier="doi:10.5061/dryad.8pk0p2nx1;doi:10.5281/zenodo.11097259",
-        # BIFROST publishes large NIfTI/HDF5 transform resources. The benchmark
-        # consumes a derived compact region mapping, not a fictitious CSV from
-        # the paper DOI.
         resolved_filename=None,
         direct_download=False,
     ),
     "motor_neuron_muscle_map": ArtifactAuthority(
         key="motor_neuron_muscle_map",
         repository_identifier="doi:10.1038/s41586-024-07389-x;github:EllenLesser/Azevedo_Lesser_Phelps_Mark_2023",
-        # Concrete upstream mappings exist (escape_df.pkl, jsons/*.json and
-        # data/synapse_tables/*), but the cross-animal atlas still requires an
-        # explicit derived module mapping before same-benchmark use.
         resolved_filename=None,
         direct_download=False,
     ),
@@ -88,9 +74,6 @@ MALECNS_REAL_AUTHORITIES: dict[str, ArtifactAuthority] = {
 }
 
 
-# Exact BIFROST source resources discovered from Dryad version 295150. These
-# hashes are repository receipts, not claims that the files are compact
-# registration maps suitable for direct ingestion by this benchmark.
 BIFROST_DRYAD_RESOURCES: tuple[UpstreamRepositoryArtifact, ...] = (
     UpstreamRepositoryArtifact(
         "doi:10.5061/dryad.8pk0p2nx1",
@@ -123,10 +106,14 @@ BIFROST_DRYAD_RESOURCES: tuple[UpstreamRepositoryArtifact, ...] = (
 )
 
 
-# Concrete Azevedo/Lesser resources discovered in the public analysis
-# repository. No immutable hash is asserted here until a repository commit is
-# pinned; this registry only removes the previous fiction that a paper DOI was a
-# ready-made motor_neuron_to_muscle_targets.csv file.
+GAUTHEY_COMPACT_RESOLVED_MEMBERS: tuple[str, ...] = (
+    "Data/Dffs/Audio correlated/dffs_audio_2p_corr_top05_all.pkl",
+    "Data/Mean brain/audio_roi_04032024_6f_a2_r5_pval.csv",
+    "Data/Labels/04032024_6f_a2_r5_n2000_labels.h5",
+    "Data/Mean brain/04032024_GCamp6f_a2_r5_w3_mean_G.nii",
+)
+
+
 AZEVEDO_LESSER_RESOLVED_FILES: tuple[str, ...] = (
     "escape_df.pkl",
     "jsons/ti_flexor.json",
