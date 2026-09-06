@@ -7,7 +7,7 @@ DOI 10.1038/s41467-026-72437-1; preprocessed data DOI 10.5281/zenodo.17618684;
 analysis code github:murthylab/lightbead-analysis.
 
 This module turns repository/deposit discovery into explicit benchmark payment
-states.  A failed closed-world recovery route is not equivalent to an absent
+states. A failed closed-world recovery route is not equivalent to an absent
 scientific fact: it means an external producer must supply a receipt.
 """
 
@@ -51,7 +51,7 @@ def classify_deposit_source_resolution(payload: Mapping[str, object]) -> Deposit
     """Classify the output of ``resolve_gauthey_2p_sources.py``.
 
     The resolver stores a mapping from each required basename to zero, one, or
-    multiple matching archive members.  Exact row recovery is available only
+    multiple matching archive members. Exact row recovery is available only
     when every required source file resolves uniquely.
     """
     resolved_obj = payload.get("resolved")
@@ -102,9 +102,11 @@ def canonical_public_atlas_registration_frontier() -> AtlasRegistrationFrontier:
     """Current public-code boundary for the Gauthey local-atlas route.
 
     The public repository contains ``batch_tiff_to_local_atlas_AL.sh`` and its
-    README declares ANTsPy for the signal-extraction pipeline, but the launcher
-    references ``tiff_to_local_atlas.py`` and that implementation is not present
-    in the public repository tree audited for this tranche.
+    README declares ANTsPy for the signal-extraction pipeline. The launcher
+    invokes ``tiff_to_local_atlas.py``; that referenced implementation was not
+    present in the public repository tree audited for this tranche. This is a
+    public-source audit result, not a claim that the implementation never
+    existed elsewhere.
     """
     return AtlasRegistrationFrontier(
         launcher_present=True,
