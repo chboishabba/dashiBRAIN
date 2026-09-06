@@ -1,15 +1,15 @@
-"""Conservative alignment diagnostics for Gauthey functional columns and ROIs.
+"""Conservative alignment diagnostics for Gauthey selected-ROI units and labels.
 
 Scientific source:
 Wayan Gauthey, Albert Lin, Osama M. Ahmed, Andrew M. Leifer, Mala Murthy,
 Stephan Y. Thiberge, "High-speed whole-brain imaging in Drosophila",
 DOI 10.1038/s41467-026-72437-1; data DOI 10.5281/zenodo.17618684.
 
-The deposited functional matrix has 668 archive-local columns.  The segmentation
-and responsive-ROI products are separate objects.  Numerical coincidences such
-as equal cardinality or contiguous integer labels are diagnostics only; they do
-not establish column-to-ROI identity.  Promotion requires an explicit mapping
-receipt.
+The deposited conventional-2p ``audio_correlated`` matrix is 940 selected ROI
+rows x 668 time samples. The 668 axis is time, not a functional-unit carrier.
+Numerical coincidences such as equal cardinality or contiguous integer labels
+remain diagnostic only; promotion requires an explicit selected-ROI -> source
+segmentation-label mapping receipt.
 """
 
 from __future__ import annotations
@@ -19,15 +19,16 @@ from pathlib import Path
 import csv
 from typing import Mapping, Sequence
 
-import numpy as np
-
 from dashi.io.gauthey_compact import GautheyFunctionalMatrix
 from dashi.io.gauthey_registration_staging import LabelCentroid
 
 
 @dataclass(frozen=True)
 class AlignmentDiagnostic:
-    functional_column_count: int
+    functional_unit_count: int
+    time_sample_count: int
+    source_array_rows: int | None
+    source_array_columns: int | None
     segmentation_label_count: int
     responsive_roi_count: int | None
     same_cardinality: bool
@@ -38,19 +39,23 @@ class AlignmentDiagnostic:
     evidence_kind: str
     note: str
 
+    @property
+    def functional_column_count(self) -> int:
+        """Deprecated compatibility alias.
+
+        Historically this was incorrectly interpreted as the number of units.
+        It now returns the deposited source-array column count (time samples).
+        """
+        return self.source_array_columns if self.source_array_columns is not None else self.time_sample_count
+
 
 @dataclass(frozen=True)
 class FunctionalToLabelMap:
-    """Explicit archive-column -> segmentation-label mapping receipt.
-
-    This type is intentionally constructible only from a mapping table supplied
-    by an external producer or a separately justified derivation.  The auditor
-    below never manufactures this map from cardinality/order alone.
-    """
+    """Explicit selected-functional-unit -> segmentation-label mapping receipt."""
 
     column_to_label: Mapping[str, int]
     source_identifier: str
-    evidence_kind: str = "explicit_functional_column_to_segmentation_label_map"
+    evidence_kind: str = "explicit_selected_roi_to_segmentation_label_map"
 
     def validate(self, functional: GautheyFunctionalMatrix, centroids: Sequence[LabelCentroid]) -> None:
         labels = {int(c.label_id) for c in centroids}
@@ -66,12 +71,7 @@ class FunctionalToLabelMap:
 
 
 def _parse_roi_values(path: str | Path) -> tuple[int, ...]:
-    """Read a Gauthey responsive-ROI CSV conservatively.
-
-    The published compact file observed by the runner contains columns
-    ``Unnamed: 0`` and ``ROI``.  We use the explicit ``ROI`` column only and
-    require integer-like values; the row index is never treated as identity.
-    """
+    """Read an explicit ``ROI`` integer column without treating row order as identity."""
     with Path(path).open("r", newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         if not reader.fieldnames or "ROI" not in reader.fieldnames:
@@ -109,15 +109,24 @@ def audit_functional_label_alignment(
     mapping_present = explicit_mapping is not None
     promotable = False
     note = (
-        "Cardinality/order diagnostics do not identify functional columns with segmentation labels."
+        "Cardinality/order diagnostics do not identify selected functional ROI rows "
+        "with segmentation labels."
     )
     if explicit_mapping is not None:
         explicit_mapping.validate(functional, centroids)
         promotable = True
-        note = "Explicit mapping domain/codomain validated against deposited functional units and labels."
+        note = "Explicit mapping domain/codomain validated against selected functional units and labels."
+
+    source_rows = None
+    source_cols = None
+    if functional.source_array_shape is not None:
+        source_rows, source_cols = functional.source_array_shape
 
     return AlignmentDiagnostic(
-        functional_column_count=len(functional.unit_ids),
+        functional_unit_count=len(functional.unit_ids),
+        time_sample_count=int(functional.traces.shape[0]),
+        source_array_rows=source_rows,
+        source_array_columns=source_cols,
         segmentation_label_count=len(labels),
         responsive_roi_count=None if responsive is None else len(responsive),
         same_cardinality=same_cardinality,
