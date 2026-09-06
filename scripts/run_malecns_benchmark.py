@@ -2,8 +2,7 @@
 """Run dependence-aware MaleCNS structure/function/effector benchmark.
 
 Mock mode exercises mechanics only. Real mode never substitutes hash-derived
-observations: it runs only the empirical stages supported by present, resolved
-artifacts and reports unavailable stages explicitly.
+observations: empirical stages run only when their real artifacts exist.
 """
 
 from __future__ import annotations
@@ -16,32 +15,20 @@ from typing import Any
 
 import numpy as np
 
-from dashi.analysis.benchmark import (
-    PredictorKind,
-    StructureFunctionBenchmark,
-    dashi_beats_baseline,
-    mean_numeric_residual,
-)
-from dashi.analysis.benchmark_nulls import residual_against_permutation_nulls
-from dashi.analysis.benchmark_promotion import (
-    BenchmarkRunMode,
-    RunEvidenceStatus,
-    consumer_promotable_for_run,
-    result_wording,
-)
+from dashi.analysis.benchmark import PredictorKind, StructureFunctionBenchmark, dashi_beats_baseline, mean_numeric_residual
+from dashi.analysis.benchmark_nulls import train_heldout_permutation_nulls, train_heldout_topology_nulls
+from dashi.analysis.benchmark_promotion import BenchmarkRunMode, RunEvidenceStatus, consumer_promotable_for_run, result_wording
 from dashi.analysis.consumer_evidence import EvidenceConsumer
-from dashi.analysis.provenance_dependence import EvidenceRelation, classify_evidence_relation
+from dashi.analysis.provenance_dependence import classify_evidence_relation
 from dashi.analysis.structure_function_real import (
+    RegionStructuralFeatures,
     aggregate_connectome_by_region,
     evaluate_region_structure_function,
     functional_correlation,
+    pairwise_train_holdout_masks,
 )
 from dashi.io.artifact_verification import verify_consumer_artifacts
-from dashi.io.functional_imaging_loader import (
-    aggregate_functional_traces_by_region,
-    load_functional_traces,
-    load_registration_map,
-)
+from dashi.io.functional_imaging_loader import aggregate_functional_traces_by_region, load_functional_traces, load_registration_map
 from dashi.io.malecns_manifest import MaleCNSManifest
 from dashi.io.malecns_real_data import MALECNS_REAL_AUTHORITIES
 
@@ -71,7 +58,6 @@ def _metadata_column(graph, aliases: tuple[str, ...]) -> str | None:
 
 
 def _mock_structure_function(nodes: list[str]) -> dict[str, Any]:
-    # Deterministic pipeline diagnostic. These numbers have no empirical authority.
     benchmark = StructureFunctionBenchmark(
         direct_feature=lambda a, b: 1.0 if (sum(map(ord, str(a))) + sum(map(ord, str(b)))) % 5 == 0 else 0.0,
         path_feature=lambda a, b: float((sum(map(ord, str(a))) * 31 + sum(map(ord, str(b)))) % 10) / 10.0,
@@ -93,16 +79,14 @@ def _mock_structure_function(nodes: list[str]) -> dict[str, Any]:
     for pair in pairs:
         fpair = (f"f_{pair[0]}", f"f_{pair[1]}")
         result = benchmark.evaluate_pair(pair, fpair)
-        for k, v in result.items():
-            residuals[k].append(v)
+        for k, value in result.items():
+            residuals[k].append(value)
     return {
         "status": "synthetic_diagnostic",
         "mean_direct_edge_residual": mean_numeric_residual(residuals[PredictorKind.DIRECT_EDGE]),
         "mean_path_aware_residual": mean_numeric_residual(residuals[PredictorKind.PATH_AWARE]),
         "mean_dashi_residual": mean_numeric_residual(residuals[PredictorKind.DASHI]),
-        "dashi_beats_direct": dashi_beats_baseline(
-            residuals[PredictorKind.DASHI], residuals[PredictorKind.DIRECT_EDGE]
-        ),
+        "dashi_beats_direct": dashi_beats_baseline(residuals[PredictorKind.DASHI], residuals[PredictorKind.DIRECT_EDGE]),
     }
 
 
@@ -118,30 +102,30 @@ def _real_structure_function(manifest: MaleCNSManifest) -> dict[str, Any]:
         return {"status": "unavailable", "missing_artifacts": missing}
 
     from dashi.io.malecns_loader import load_malecns_graph
+    from dashi.io.malecns_signs import signed_adjacency_for_graph
 
     graph = load_malecns_graph(
         manifest.target_path("connectome_weights_significant"),
         annotations_path=manifest.target_path("body_annotations"),
-        neurotransmitters_path=(
-            manifest.target_path("body_neurotransmitters")
-            if manifest.is_present("body_neurotransmitters") else None
-        ),
         signed_by_transmitter=False,
     )
-    signed_graph = None
+    signed_adjacency = None
     if manifest.is_present("body_neurotransmitters"):
-        signed_graph = load_malecns_graph(
-            manifest.target_path("connectome_weights_significant"),
-            annotations_path=manifest.target_path("body_annotations"),
-            neurotransmitters_path=manifest.target_path("body_neurotransmitters"),
-            signed_by_transmitter=True,
+        signed_adjacency = signed_adjacency_for_graph(
+            graph,
+            manifest.target_path("body_neurotransmitters"),
         )
 
-    region_col = _metadata_column(graph, ("neuropil", "region", "primary_neuropil", "soma_neuropil"))
+    # Actual MaleCNS v1.0 exposes somaNeuromere. It is a defensible coarse
+    # biological grouping, not a claim of direct functional-neuron identity.
+    region_col = _metadata_column(
+        graph,
+        ("somaNeuromere", "neuromere", "neuropil", "region", "primary_neuropil", "soma_neuropil"),
+    )
     if region_col is None:
         return {
             "status": "unavailable",
-            "reason": "connectome annotations expose no recognized region/neuropil column",
+            "reason": "connectome annotations expose no recognized region/neuromere column",
             "available_metadata": sorted(graph.metadata or {}),
         }
 
@@ -153,54 +137,74 @@ def _real_structure_function(manifest: MaleCNSManifest) -> dict[str, Any]:
     structural = aggregate_connectome_by_region(
         graph.carrier,
         node_regions,
-        signed_adjacency=signed_graph.carrier if signed_graph is not None else None,
+        signed_adjacency=signed_adjacency,
     )
 
-    common = tuple(r for r in structural.regions if r in set(functional_region.unit_ids))
+    functional_region_set = set(functional_region.unit_ids)
+    common = tuple(r for r in structural.regions if r in functional_region_set)
     if len(common) < 3:
         return {
             "status": "unavailable",
             "reason": "fewer than three common registered regions",
             "structural_region_count": len(structural.regions),
             "functional_region_count": len(functional_region.unit_ids),
+            "structural_region_field": region_col,
         }
 
-    si = [structural.regions.index(r) for r in common]
-    fi = [functional_region.unit_ids.index(r) for r in common]
+    structural_index = {r: i for i, r in enumerate(structural.regions)}
+    functional_index = {r: i for i, r in enumerate(functional_region.unit_ids)}
+    si = [structural_index[r] for r in common]
+    fi = [functional_index[r] for r in common]
+
     direct = structural.direct[np.ix_(si, si)]
     two_hop = structural.two_hop[np.ix_(si, si)]
     signed = structural.signed_direct[np.ix_(si, si)] if structural.signed_direct is not None else None
-    structural_common = type(structural)(common, direct, two_hop, signed)
+    structural_common = RegionStructuralFeatures(common, direct, two_hop, signed)
 
     traces = functional_region.traces[:, fi]
     functional_assoc = functional_correlation(traces, common)
+    fit_mask, held_mask = pairwise_train_holdout_masks(len(common), modulus=3, held_out_residue=0)
+    result = evaluate_region_structure_function(
+        structural_common,
+        functional_assoc,
+        fit_mask=fit_mask,
+        held_out_mask=held_mask,
+    )
 
-    # Pair-level holdout: deterministic checkerboard mask, disjoint from fitting pairs.
-    n = len(common)
-    ii, jj = np.indices((n, n))
-    held_mask = ((ii + jj) % 3 == 0)
-    result = evaluate_region_structure_function(structural_common, functional_assoc, held_out_mask=held_mask)
-
-    null = residual_against_permutation_nulls(
-        # Null comparison uses the full direct structural surface scaled only for shape.
-        structural_common.direct,
+    signed_feature = signed if signed is not None else np.zeros_like(direct)
+    dashi_raw = 0.5 * direct + 0.4 * two_hop + 0.1 * signed_feature
+    registration_null = train_heldout_permutation_nulls(
+        dashi_raw,
         functional_assoc.matrix,
+        fit_mask=fit_mask,
+        held_out_mask=held_mask,
         n_null=100,
         seed=42,
+    )
+    topology_null = train_heldout_topology_nulls(
+        direct,
+        functional_assoc.matrix,
+        fit_mask=fit_mask,
+        held_out_mask=held_mask,
+        n_null=100,
+        seed=4242,
     )
 
     return {
         "status": "real_region_level",
-        "resolution": "region_or_neuropil",
+        "resolution": "soma_neuromere_or_registered_region",
+        "structural_region_field": region_col,
         "direct_neuron_identity_fraction": registration.direct_identity_fraction(),
         "regions": list(common),
+        "fit_pair_count": result.fit_pair_count,
+        "held_out_pair_count": result.held_out_pair_count,
         "mean_direct_edge_residual": result.mean_direct,
         "mean_path_aware_residual": result.mean_path,
         "mean_dashi_residual": result.mean_dashi,
         "dashi_beats_direct": result.mean_dashi < result.mean_direct,
         "dashi_beats_path": result.mean_dashi < result.mean_path,
-        "registration_permutation_null_p": null.empirical_p_value,
-        "held_out_pair_count": int(result.observed.size),
+        "registration_permutation_null_p": registration_null.empirical_p_value,
+        "region_degree_preserving_null_p": topology_null.empirical_p_value,
     }
 
 
@@ -216,19 +220,19 @@ def run_benchmark(base_dir: str = "data/malecns", mock_run: bool = False, output
     rel_same_trial = classify_evidence_relation(prov_graph, "functional_trial_calcium", "behaviour_fictrac_kinematics")
     rel_cross_animal = classify_evidence_relation(prov_graph, "connectome_weights_significant", "functional_trial_calcium")
 
+    tracked_consumers = (
+        EvidenceConsumer.STRUCTURE_FUNCTION,
+        EvidenceConsumer.NEURAL_STATE,
+        EvidenceConsumer.EFFECTOR_STATE,
+        EvidenceConsumer.BEHAVIOUR,
+    )
     consumer_verification = {
-        c: verify_consumer_artifacts(c, paths, MALECNS_REAL_AUTHORITIES)
-        for c in (
-            EvidenceConsumer.STRUCTURE_FUNCTION,
-            EvidenceConsumer.NEURAL_STATE,
-            EvidenceConsumer.EFFECTOR_STATE,
-            EvidenceConsumer.BEHAVIOUR,
-        )
+        consumer: verify_consumer_artifacts(consumer, paths, MALECNS_REAL_AUTHORITIES)
+        for consumer in tracked_consumers
     }
 
     if mock_run:
-        nodes = [f"body_{i:04d}" for i in range(100)]
-        metrics = _mock_structure_function(nodes)
+        metrics = _mock_structure_function([f"body_{i:04d}" for i in range(100)])
         global_mode = BenchmarkRunMode.MOCK
     else:
         metrics = _real_structure_function(manifest)
@@ -240,13 +244,8 @@ def run_benchmark(base_dir: str = "data/malecns", mock_run: bool = False, output
             else BenchmarkRunMode.SYNTHETIC
         )
 
-    # Split receipt is meaningful only after a concrete evaluated unit family exists.
     held_out_verified = metrics.get("held_out_pair_count", 0) > 0 or mock_run
-
-    bundles = manifest.build_consumer_bundles(
-        dependence_relation=rel_cross_animal,
-        provenance_adequate=True,
-    )
+    bundles = manifest.build_consumer_bundles(dependence_relation=rel_cross_animal, provenance_adequate=True)
 
     consumer_results: dict[str, Any] = {}
     for consumer in (
@@ -265,16 +264,28 @@ def run_benchmark(base_dir: str = "data/malecns", mock_run: bool = False, output
             else BenchmarkRunMode.REAL_UNVERIFIED if input_present
             else BenchmarkRunMode.SYNTHETIC
         )
+        registration_verified = (
+            consumer is not EvidenceConsumer.STRUCTURE_FUNCTION
+            or bool(
+                verification
+                and verification.artifacts.get("registration_bifrost_map")
+                and verification.artifacts["registration_bifrost_map"].hash_verified
+            )
+        )
+        # The result payload is digested below. It is an integrity receipt, not
+        # an independently pre-pinned scientific authority; empirical promotion
+        # still requires all consumer inputs and the real evaluated stage.
+        output_verified = (
+            not mock_run
+            and metrics.get("status") == "real_region_level"
+            and input_verified
+        )
         run_status = RunEvidenceStatus(
             mode=mode,
             input_hashes_verified=input_verified,
-            registration_verified=(
-                consumer not in {EvidenceConsumer.STRUCTURE_FUNCTION}
-                or bool(verification and verification.artifacts.get("registration_bifrost_map") and verification.artifacts["registration_bifrost_map"].hash_verified)
-            ),
+            registration_verified=registration_verified,
             held_out_split_verified=held_out_verified,
-            # Result payload is checksummed below; this records that the mechanism exists.
-            output_hash_verified=not mock_run and metrics.get("status") == "real_region_level",
+            output_hash_verified=output_verified,
             same_trial_only=(consumer is EvidenceConsumer.SEMANTIC),
             synthetic_observations_present=mock_run or metrics.get("status") == "synthetic_diagnostic",
         )
@@ -304,6 +315,7 @@ def run_benchmark(base_dir: str = "data/malecns", mock_run: bool = False, output
             "same_region_is_not_same_neuron": True,
             "cross_animal_motor_atlas_is_not_same_animal_identity": True,
             "repository_doi_is_not_direct_file_receipt": True,
+            "fit_pairs_are_disjoint_from_held_out_pairs": True,
         },
     }
     summary["result_payload_sha256"] = _canonical_sha256(summary)
@@ -315,9 +327,9 @@ def run_benchmark(base_dir: str = "data/malecns", mock_run: bool = False, output
         print(f"Saved benchmark run summary to {out}")
 
     print(f"Structure/function stage: {metrics.get('status')}")
-    for c, result in consumer_results.items():
+    for consumer, result in consumer_results.items():
         print(
-            f"  {c.upper()}: active={result['active_target']} "
+            f"  {consumer.upper()}: active={result['active_target']} "
             f"policy={result['policy_sufficient']} verified={result['artifacts_hash_verified']} "
             f"promotion={result['empirically_promotable']}"
         )
