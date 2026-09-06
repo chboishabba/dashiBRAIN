@@ -5,17 +5,21 @@ Wayan Gauthey, Albert Lin, Osama M. Ahmed, Andrew M. Leifer, Mala Murthy,
 Stephan Y. Thiberge, "High-speed whole-brain imaging in Drosophila",
 DOI 10.1038/s41467-026-72437-1; preprocessed data DOI 10.5281/zenodo.17618684.
 
-The full Zenodo Data.zip is ~48.75 GB.  This module uses HTTP Range + Zip64
-metadata to fetch only selected members.  Archive-array column indices are not
-promoted to anatomical ROI or neuron identities without a separate registration
-receipt.
+The full Zenodo Data.zip is ~48.75 GB. This module uses HTTP Range + Zip64
+metadata to fetch only selected members.
+
+Important source-code receipt: the published ``fig3_preprocessing.py`` 2-photon
+branch sets ``min_dim = 668``, slices each ROI matrix as
+``dffs_corrected[:, :668]``, vertically stacks ROI rows across four trials, then
+exports ``dffs_all[audio_correlated, :]``. Therefore the deposited
+``audio_correlated`` array shape 940 x 668 means 940 selected ROI rows x 668
+time samples. The prior interpretation of 668 functional units was incorrect.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from hashlib import sha256
-import io
 import json
 from pathlib import Path
 import pickle
@@ -23,19 +27,43 @@ from typing import Mapping
 
 import numpy as np
 
-from dashi.io.remote_zip import RemoteZipMember, fetch_named_member
+from dashi.io.remote_zip import fetch_named_member
 
 
 GAUTHEY_DATA_ZIP_URL = "https://zenodo.org/api/records/17618684/files/Data.zip/content"
 GAUTHEY_DATA_DOI = "doi:10.5281/zenodo.17618684"
 GAUTHEY_PAPER_DOI = "doi:10.1038/s41467-026-72437-1"
+GAUTHEY_CODE_REPOSITORY = "github:murthylab/lightbead-analysis"
 
+# Compact members already resolved in the deposit. The LB-specific ROI/label/
+# mean-brain companions remain useful as their own lane, but they are NOT
+# candidate identity maps for the pooled conventional-2p functional matrix.
 GAUTHEY_COMPACT_MEMBERS: Mapping[str, str] = {
-    "functional_audio_correlated": "Data/Dffs/Audio correlated/dffs_audio_2p_corr_top05_all.pkl",
-    "responsive_roi_list": "Data/Mean brain/audio_roi_04032024_6f_a2_r5_pval.csv",
-    "segmentation_labels": "Data/Labels/04032024_6f_a2_r5_n2000_labels.h5",
-    "mean_brain": "Data/Mean brain/04032024_GCamp6f_a2_r5_w3_mean_G.nii",
+    "functional_audio_correlated_2p": "Data/Dffs/Audio correlated/dffs_audio_2p_corr_top05_all.pkl",
+    "lb_responsive_roi_list": "Data/Mean brain/audio_roi_04032024_6f_a2_r5_pval.csv",
+    "lb_segmentation_labels": "Data/Labels/04032024_6f_a2_r5_n2000_labels.h5",
+    "lb_mean_brain": "Data/Mean brain/04032024_GCamp6f_a2_r5_w3_mean_G.nii",
 }
+
+# Source-code-declared conventional-2p inputs used to construct the deposited
+# pooled top-0.5% matrix. Presence inside Data.zip is a separate repository
+# resolution question and is not asserted by these names alone.
+GAUTHEY_2P_TRIALS: tuple[tuple[str, str], ...] = (
+    ("GCaMP6f_12132024_a2_r2.pkl", "12132024_6f_a2_r2_n1000_labels.h5"),
+    ("GCaMP6f_12132024_a2_r3.pkl", "12132024_6f_a2_r3_n1000_labels.h5"),
+    ("GCaMP6f_12132024_a2_r4.pkl", "12132024_6f_a2_r4_n1000_labels.h5"),
+    ("GCaMP6f_12202024_a1_r2.pkl", "12202024_6f_a1_r2_n1000_labels.h5"),
+)
+GAUTHEY_2P_PLANES_PER_TRIAL = 47
+GAUTHEY_2P_CLUSTERS_PER_PLANE = 1000
+GAUTHEY_2P_TIME_SAMPLES = 668
+GAUTHEY_2P_SELECTION_PERCENT = 0.5
+GAUTHEY_2P_CANDIDATE_ROIS = (
+    len(GAUTHEY_2P_TRIALS) * GAUTHEY_2P_PLANES_PER_TRIAL * GAUTHEY_2P_CLUSTERS_PER_PLANE
+)
+GAUTHEY_2P_EXPECTED_SELECTED_ROIS = int(
+    GAUTHEY_2P_CANDIDATE_ROIS * (GAUTHEY_2P_SELECTION_PERCENT / 100.0)
+)
 
 
 @dataclass(frozen=True)
@@ -51,10 +79,14 @@ class CompactMemberReceipt:
 
 @dataclass(frozen=True)
 class GautheyFunctionalMatrix:
-    traces: np.ndarray
+    """Functional traces normalized to the repository-wide time x unit convention."""
+
+    traces: np.ndarray  # time x selected ROI
     unit_ids: tuple[str, ...]
     identity_kind: str
     source_member: str
+    source_array_shape: tuple[int, int] | None = None
+    source_axis_semantics: str = "time_x_unit"
 
 
 def materialize_compact_bundle(
@@ -92,9 +124,20 @@ def write_bundle_receipt(
             "title": "High-speed whole-brain imaging in Drosophila",
             "paper_identifier": GAUTHEY_PAPER_DOI,
             "dataset_identifier": GAUTHEY_DATA_DOI,
+            "code_repository": GAUTHEY_CODE_REPOSITORY,
         },
         "members": {k: vars(v) for k, v in receipts.items()},
-        "boundary": "archive array indices are not anatomical ROI/neuron identities without registration",
+        "2p_source_semantics": {
+            "candidate_roi_rows": GAUTHEY_2P_CANDIDATE_ROIS,
+            "selected_roi_rows": GAUTHEY_2P_EXPECTED_SELECTED_ROIS,
+            "time_samples": GAUTHEY_2P_TIME_SAMPLES,
+            "selection_percent": GAUTHEY_2P_SELECTION_PERCENT,
+            "deposited_matrix_semantics": "selected_roi_x_time",
+        },
+        "boundary": (
+            "selected ROI row index is not trial/slice/supervoxel identity without "
+            "recovering the source selection indices"
+        ),
     }
     p = Path(output_path)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -102,6 +145,12 @@ def write_bundle_receipt(
 
 
 def load_audio_correlated_pickle(path: str | Path) -> GautheyFunctionalMatrix:
+    """Load the deposited pooled conventional-2p top-0.5% ROI matrix.
+
+    The source export is ``dffs_all[audio_correlated, :]``. Hence deposited rows
+    are selected ROI traces and deposited columns are time samples. Internally we
+    transpose to the repository convention time x unit.
+    """
     with open(path, "rb") as f:
         obj = pickle.load(f)
     if not isinstance(obj, dict) or "audio_correlated" not in obj:
@@ -109,20 +158,20 @@ def load_audio_correlated_pickle(path: str | Path) -> GautheyFunctionalMatrix:
     arr = np.asarray(obj["audio_correlated"], dtype=float)
     if arr.ndim != 2:
         raise ValueError("audio_correlated must be a 2-D array")
-    # Runner inspection established the deposited object as 940 x 668.  We do
-    # not assume which axis is time solely from that receipt; prefer the larger
-    # first dimension as time for this exact known artifact and retain only
-    # archive-local unit identities until registration is supplied.
-    if arr.shape == (940, 668):
-        traces = arr
-    elif arr.shape == (668, 940):
-        traces = arr.T
-    else:
-        raise ValueError(f"unexpected Gauthey audio_correlated shape: {arr.shape}")
-    unit_ids = tuple(f"archive_unit_{i:04d}" for i in range(traces.shape[1]))
+    if arr.shape != (GAUTHEY_2P_EXPECTED_SELECTED_ROIS, GAUTHEY_2P_TIME_SAMPLES):
+        raise ValueError(
+            "unexpected Gauthey 2p audio_correlated shape: "
+            f"{arr.shape}; expected "
+            f"({GAUTHEY_2P_EXPECTED_SELECTED_ROIS}, {GAUTHEY_2P_TIME_SAMPLES})"
+        )
+
+    traces = arr.T  # repository convention: time x unit
+    unit_ids = tuple(f"selected_roi_{i:04d}" for i in range(arr.shape[0]))
     return GautheyFunctionalMatrix(
         traces=traces,
         unit_ids=unit_ids,
-        identity_kind="archive_array_index_unregistered",
-        source_member=GAUTHEY_COMPACT_MEMBERS["functional_audio_correlated"],
+        identity_kind="pooled_selected_roi_row_unmapped_to_source_roi",
+        source_member=GAUTHEY_COMPACT_MEMBERS["functional_audio_correlated_2p"],
+        source_array_shape=tuple(int(x) for x in arr.shape),
+        source_axis_semantics="selected_roi_x_time",
     )
