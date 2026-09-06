@@ -143,3 +143,11 @@ def distinct_modality_does_not_imply_independence(
     return not graph.shared_roots(left, right) or not graph.independent_by_upstream_closure(
         left, right
     )
+
+
+def classify_evidence_relation(
+    graph: ProvenanceGraph[ArtifactT], left: ArtifactT, right: ArtifactT
+) -> EvidenceRelation:
+    """Classify the evidence relationship between two artifacts in a provenance graph."""
+    return graph.relation(left, right)
+
