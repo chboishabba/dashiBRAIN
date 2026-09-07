@@ -98,6 +98,31 @@ def classify_deposit_source_resolution(payload: Mapping[str, object]) -> Deposit
     )
 
 
+def canonical_deposited_2p_recovery_frontier() -> DepositRecoveryFrontier:
+    """Pinned closed-world audit for the published Gauthey ``Data.zip``.
+
+    The execution receipt inspected the full 35-member central directory. All
+    eight source-code-declared conventional-2p generating inputs had zero
+    matches. This pins the *deposit route* closed-negative while leaving open an
+    external scientific receipt from the data producers or another authoritative
+    carrier.
+    """
+    return DepositRecoveryFrontier(
+        archive_member_count=35,
+        required_file_count=8,
+        uniquely_resolved_file_count=0,
+        zero_match_file_count=8,
+        ambiguous_file_count=0,
+        all_required_uniquely_resolved=False,
+        exact_trace_recovery_available=False,
+        payment_a_route=PaymentRoute.EXTERNAL_SCIENTIFIC_RECEIPT,
+        required_output_rows=940,
+        note=(
+            "Audited deposited source set contains none of the eight generating conventional-2p inputs; Payment A requires an external 940-row selected_roi -> (trial, plane, cluster) receipt."
+        ),
+    )
+
+
 def canonical_public_atlas_registration_frontier() -> AtlasRegistrationFrontier:
     """Current public-code boundary for the Gauthey local-atlas route.
 
