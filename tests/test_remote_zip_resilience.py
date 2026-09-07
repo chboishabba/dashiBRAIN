@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.client
 import io
 from pathlib import Path
 import urllib.error
@@ -26,6 +27,11 @@ class _Response:
         return self._data
 
 
+class _IncompleteResponse(_Response):
+    def read(self) -> bytes:
+        raise http.client.IncompleteRead(self._data, 7)
+
+
 def _raw_deflate(payload: bytes) -> bytes:
     c = zlib.compressobj(level=6, wbits=-15)
     return c.compress(payload) + c.flush()
@@ -45,6 +51,23 @@ def test_request_retries_transient_504(monkeypatch):
 
     data, _ = remote_zip._request("https://example.test/archive", max_attempts=2)
     assert data == b"ok"
+    assert calls["n"] == 2
+
+
+def test_request_retries_incomplete_read(monkeypatch):
+    calls = {"n": 0}
+
+    def fake_urlopen(req, timeout):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _IncompleteResponse(b"partial")
+        return _Response(b"complete")
+
+    monkeypatch.setattr(remote_zip.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(remote_zip.time, "sleep", lambda _: None)
+
+    data, _ = remote_zip._request("https://example.test/archive", max_attempts=2)
+    assert data == b"complete"
     assert calls["n"] == 2
 
 
