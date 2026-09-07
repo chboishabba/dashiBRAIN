@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reconstruct Gauthey LBM selected ROI identities from the six deposited trials."""
+"""Reconstruct Gauthey LBM selected ROI identities from six local source trials."""
 
 from __future__ import annotations
 
@@ -10,9 +10,15 @@ from pathlib import Path
 
 import numpy as np
 
-from dashi.analysis.gauthey_lbm_experiment import (
-    LBM_SOURCE_PICKLE_NAMES,
-    reconstruct_lbm_selected_from_trials,
+from dashi.analysis.gauthey_lbm_experiment import reconstruct_lbm_selected_from_trials
+
+SOURCE_PICKLE_NAMES = (
+    "GCaMP6f_04032024_a2_r1.pkl",
+    "GCaMP6f_04032024_a2_r5.pkl",
+    "GCaMP6f_04162024_a1_r1.pkl",
+    "GCaMP6f_04192024_a1_r2.pkl",
+    "GCaMP6f_04192024_a1_r6.pkl",
+    "GCaMP6f_04192024_a1_r9.pkl",
 )
 
 
@@ -24,7 +30,7 @@ def main() -> None:
     args = parser.parse_args()
 
     trial_dir = Path(args.trial_dir)
-    trial_paths = [trial_dir / name for name in LBM_SOURCE_PICKLE_NAMES]
+    trial_paths = [trial_dir / name for name in SOURCE_PICKLE_NAMES]
     missing = [str(path) for path in trial_paths if not path.exists()]
     if missing:
         raise SystemExit("missing source trial pickles:\n" + "\n".join(missing))
