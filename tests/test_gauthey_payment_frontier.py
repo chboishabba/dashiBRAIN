@@ -1,5 +1,6 @@
 from dashi.io.gauthey_payment_frontier import (
     PaymentRoute,
+    canonical_deposited_2p_recovery_frontier,
     canonical_public_atlas_registration_frontier,
     classify_deposit_source_resolution,
 )
@@ -52,6 +53,19 @@ def test_ambiguous_source_file_does_not_count_as_resolved():
     assert frontier.ambiguous_file_count == 1
     assert frontier.uniquely_resolved_file_count == 0
     assert frontier.payment_a_route is PaymentRoute.EXTERNAL_SCIENTIFIC_RECEIPT
+
+
+def test_pinned_deposited_frontier_is_closed_negative():
+    frontier = canonical_deposited_2p_recovery_frontier()
+    assert frontier.archive_member_count == 35
+    assert frontier.required_file_count == 8
+    assert frontier.uniquely_resolved_file_count == 0
+    assert frontier.zero_match_file_count == 8
+    assert frontier.ambiguous_file_count == 0
+    assert not frontier.all_required_uniquely_resolved
+    assert not frontier.exact_trace_recovery_available
+    assert frontier.payment_a_route is PaymentRoute.EXTERNAL_SCIENTIFIC_RECEIPT
+    assert frontier.required_output_rows == 940
 
 
 def test_public_atlas_launcher_is_not_an_executable_transform_receipt():
