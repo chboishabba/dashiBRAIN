@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
-"""Reconstruct Gauthey's 1,620 selected LBM ROIs directly from Zenodo.
+"""Recover exact Gauthey LBM selected-ROI source identities from Zenodo.
 
-The six source trial dictionaries are nested inside per-trial ZIP members of the
-~48 GB Data.zip deposit. This executable streams one outer member at a time,
-unpickles the source dictionary directly from the inner ZIP, retains only the
-trial-local top 1,620 candidates, deletes the temporary container, then performs
-the exact global top-0.5% selection and compares it to the deposited
-``dffs_audio_LB_corr_top05_all.pkl`` matrix.
+The deposited ``dffs_audio_LB_corr_top05_all.pkl`` matrix is a literal row subset
+of six vertically stacked per-trial ``dffs_aligned[:, :7977]`` matrices.  One of
+the six source containers is absent from Zenodo record 17618684, so this runner
+recovers every identity that can be established from the available containers
+instead of treating one missing trial as a global failure.
+
+For each available trial it streams one nested ZIP at a time, computes the local
+top 1,620 stimulus-correlated rows (a superset of any rows that can enter the
+global top 1,620), and matches those source traces bit-for-bit against the
+published 1,620-row matrix.  Matched rows therefore receive exact
+(trial, plane, cluster) identities; unmatched deposited rows remain explicitly
+unresolved.  ``--trial`` can restrict execution to one source trial, which is
+useful for the complete 04032024_a2_r5 spatial lane that also has a deposited
+mean-brain volume.
 """
 
 from __future__ import annotations
@@ -14,6 +22,7 @@ from __future__ import annotations
 import argparse
 import csv
 import gc
+from hashlib import sha256
 import json
 from pathlib import Path
 import pickle
@@ -97,6 +106,39 @@ def _local_candidates_from_inner_zip(
     return pooled_rows.astype(np.int64), candidate_corr, candidate_traces
 
 
+def _row_digest(row: np.ndarray) -> bytes:
+    contiguous = np.ascontiguousarray(row, dtype=np.float64)
+    return sha256(contiguous.view(np.uint8)).digest()
+
+
+def _match_candidates_to_deposited(
+    deposited: np.ndarray,
+    candidate_rows: np.ndarray,
+    candidate_corrs: np.ndarray,
+    candidate_traces: np.ndarray,
+) -> list[tuple[int, int, float]]:
+    """Return exact (deposited_row, pooled_source_row, correlation) matches.
+
+    SHA-256 is used only as an index; every hash hit is confirmed with
+    ``np.array_equal(..., equal_nan=True)`` before an identity is emitted.
+    """
+    deposited_index: dict[bytes, list[int]] = {}
+    for i in range(deposited.shape[0]):
+        deposited_index.setdefault(_row_digest(deposited[i]), []).append(i)
+
+    matches: list[tuple[int, int, float]] = []
+    used_deposited: set[int] = set()
+    for pooled_row, corr, trace in zip(candidate_rows, candidate_corrs, candidate_traces):
+        for dep_row in deposited_index.get(_row_digest(trace), ()):  # normally 0 or 1
+            if dep_row in used_deposited:
+                continue
+            if np.array_equal(trace, deposited[dep_row], equal_nan=True):
+                matches.append((dep_row, int(pooled_row), float(corr)))
+                used_deposited.add(dep_row)
+                break
+    return matches
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -107,13 +149,18 @@ def main() -> None:
     parser.add_argument("--scratch-dir", default="data/gauthey_lbm/scratch")
     parser.add_argument("--url", default=GAUTHEY_DATA_ZIP_URL)
     parser.add_argument("--chunk-mib", type=int, default=8)
-    parser.add_argument("--atol", type=float, default=1e-12)
-    parser.add_argument("--rtol", type=float, default=1e-12)
+    parser.add_argument(
+        "--trial",
+        action="append",
+        choices=LBM_TRIALS,
+        help="Recover only this segmentation-style trial ID; repeat for multiple trials. Default: all deposited trials.",
+    )
     args = parser.parse_args()
 
     deposited_path = Path(args.deposited_selected)
     if not deposited_path.exists():
         raise SystemExit(f"deposited selected matrix not found: {deposited_path}")
+    deposited = load_deposited_lbm_selected(deposited_path)
 
     scratch = Path(args.scratch_dir)
     scratch.mkdir(parents=True, exist_ok=True)
@@ -121,20 +168,27 @@ def main() -> None:
     output.mkdir(parents=True, exist_ok=True)
 
     by_name = {m.name: m for m in list_remote_zip(args.url)}
-    missing = [name for name in SOURCE_CONTAINER_MEMBERS if name not in by_name]
-    if missing:
-        raise SystemExit("source trial containers missing from deposit:\n" + "\n".join(missing))
-
+    requested = set(args.trial or LBM_TRIALS)
     stimulus = published_lbm_stimulus_regressor()
-    candidate_rows: list[np.ndarray] = []
-    candidate_corrs: list[np.ndarray] = []
-    candidate_traces: list[np.ndarray] = []
 
-    for trial_index, (source_stem, member_name) in enumerate(zip(SOURCE_STEMS, SOURCE_CONTAINER_MEMBERS)):
+    recovered: list[tuple[int, int, float]] = []
+    processed_trials: list[str] = []
+    missing_trials: list[str] = []
+
+    for trial_index, (trial_id, source_stem, member_name) in enumerate(
+        zip(LBM_TRIALS, SOURCE_STEMS, SOURCE_CONTAINER_MEMBERS)
+    ):
+        if trial_id not in requested:
+            continue
+        if member_name not in by_name:
+            print(f"[{trial_id}] source container absent: {member_name}")
+            missing_trials.append(trial_id)
+            continue
+
         member = by_name[member_name]
         tmp_zip = scratch / f"{source_stem}.zip"
         print(
-            f"[{trial_index + 1}/{len(SOURCE_STEMS)}] streaming {member_name} "
+            f"[{trial_id}] streaming {member_name} "
             f"({member.compressed_size / 1e9:.2f} GB compressed -> "
             f"{member.uncompressed_size / 1e9:.2f} GB inner ZIP)"
         )
@@ -148,39 +202,28 @@ def main() -> None:
             rows, corrs, traces = _local_candidates_from_inner_zip(
                 tmp_zip, source_stem, trial_index, stimulus
             )
-            candidate_rows.append(rows)
-            candidate_corrs.append(corrs)
-            candidate_traces.append(traces)
+            trial_matches = _match_candidates_to_deposited(deposited, rows, corrs, traces)
+            recovered.extend(trial_matches)
+            processed_trials.append(trial_id)
             print(
-                f"  retained local top {len(rows)}; "
+                f"  local candidates={len(rows)}; exact deposited matches={len(trial_matches)}; "
                 f"corr=[{float(corrs[0]):.6g}, {float(corrs[-1]):.6g}]"
             )
         finally:
             tmp_zip.unlink(missing_ok=True)
             gc.collect()
 
-    rows = np.concatenate(candidate_rows)
-    corrs = np.concatenate(candidate_corrs)
-    traces = np.vstack(candidate_traces)
-    global_order = np.argsort(corrs)[-LBM_EXPECTED_SELECTED:]
-    selected_rows = rows[global_order]
-    selected_corrs = corrs[global_order]
-    selected_traces = traces[global_order, :]
+    # A deposited row must have at most one exact source identity across the
+    # processed trials. Duplicate source traces are reported rather than silently
+    # adjudicated.
+    by_deposited: dict[int, list[tuple[int, float]]] = {}
+    for dep_row, pooled_row, corr in recovered:
+        by_deposited.setdefault(dep_row, []).append((pooled_row, corr))
+    ambiguous = {k: v for k, v in by_deposited.items() if len(v) > 1}
+    if ambiguous:
+        raise SystemExit(f"ambiguous exact source-trace matches detected: {ambiguous}")
 
-    deposited = load_deposited_lbm_selected(deposited_path)
-    diff = np.abs(selected_traces - deposited)
-    max_abs_difference = float(np.max(diff))
-    match = bool(
-        np.allclose(
-            selected_traces,
-            deposited,
-            atol=args.atol,
-            rtol=args.rtol,
-            equal_nan=True,
-        )
-    )
-
-    identity_path = output / "gauthey_lbm_selected_identities.csv"
+    identity_path = output / "gauthey_lbm_selected_identities_partial.csv"
     with identity_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow([
@@ -191,37 +234,38 @@ def main() -> None:
             "cluster_index",
             "correlation",
         ])
-        for selected_row, (pooled_row, corr) in enumerate(zip(selected_rows, selected_corrs)):
-            trial_id, plane, cluster = pooled_lbm_row_to_trial_plane_cluster(int(pooled_row))
-            writer.writerow([
-                selected_row,
-                int(pooled_row),
-                trial_id,
-                plane,
-                cluster,
-                f"{float(corr):.17g}",
-            ])
+        for dep_row in sorted(by_deposited):
+            pooled_row, corr = by_deposited[dep_row][0]
+            trial_id, plane, cluster = pooled_lbm_row_to_trial_plane_cluster(pooled_row)
+            writer.writerow([dep_row, pooled_row, trial_id, plane, cluster, f"{corr:.17g}"])
 
-    np.save(output / "gauthey_lbm_selected_reconstructed.npy", selected_traces)
+    resolved_rows = sorted(by_deposited)
+    unresolved_rows = sorted(set(range(LBM_EXPECTED_SELECTED)) - set(resolved_rows))
+    unresolved_path = output / "gauthey_lbm_selected_unresolved_rows.csv"
+    with unresolved_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["selected_row"])
+        writer.writerows([[row] for row in unresolved_rows])
+
     summary = {
-        "source_supervoxel_count": int(len(SOURCE_STEMS) * LBM_ROWS_PER_TRIAL),
-        "selected_count": int(selected_traces.shape[0]),
-        "timepoints": int(selected_traces.shape[1]),
-        "deposited_match": match,
-        "max_abs_difference": max_abs_difference,
+        "requested_trials": sorted(requested),
+        "processed_trials": processed_trials,
+        "missing_requested_trials": missing_trials,
+        "deposited_selected_count": LBM_EXPECTED_SELECTED,
+        "exact_source_identities_recovered": len(resolved_rows),
+        "unresolved_selected_rows": len(unresolved_rows),
+        "complete_identity_recovery": len(unresolved_rows) == 0,
         "identity_output": str(identity_path),
-        "selected_trace_output": str(output / "gauthey_lbm_selected_reconstructed.npy"),
+        "unresolved_output": str(unresolved_path),
         "scratch_containers_retained": False,
+        "identity_semantics": "exact trace equality to deposited selected row; not neuron identity",
     }
     summary_path = output / "gauthey_lbm_reconstruction.json"
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(json.dumps(summary, indent=2))
 
-    if not match:
-        raise SystemExit(
-            "reconstructed top-0.5% matrix does not match the deposited matrix; "
-            "do not use emitted identities for atlas aggregation"
-        )
+    if not resolved_rows:
+        raise SystemExit("no exact deposited selected traces were recovered from requested available trials")
 
 
 if __name__ == "__main__":
