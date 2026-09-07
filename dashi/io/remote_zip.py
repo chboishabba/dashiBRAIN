@@ -1,14 +1,16 @@
 """Selective HTTP-range access to very large ZIP/Zip64 scientific deposits.
 
 The reader fetches the central directory and requested compressed members only;
-it never downloads the full archive.  It supports stored and deflated members,
-checks CRC-32, and returns exact member metadata for provenance receipts.
+it never downloads the full archive. It supports stored and deflated members,
+checks CRC-32, and can stream very large members to disk without holding their
+compressed or uncompressed payloads in memory.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 import binascii
+from pathlib import Path
 import struct
 import urllib.request
 import zlib
@@ -38,7 +40,6 @@ def _request(url: str, start: int | None = None, end: int | None = None) -> tupl
 
 
 def remote_size(url: str) -> int:
-    # Range 0-0 is more reliable than HEAD on some repository gateways.
     data, headers = _request(url, 0, 0)
     content_range = headers.get("Content-Range")
     if content_range and "/" in content_range:
@@ -120,14 +121,18 @@ def list_remote_zip(url: str, *, tail_bytes: int = 1 << 20) -> tuple[RemoteZipMe
     return tuple(members)
 
 
-def fetch_remote_member(url: str, member: RemoteZipMember) -> bytes:
+def _payload_bounds(url: str, member: RemoteZipMember) -> tuple[int, int]:
     header, _ = _request(url, member.local_header_offset, member.local_header_offset + 29)
     if header[:4] != b"PK\x03\x04":
         raise HTTPRangeError(f"invalid local header for {member.name}")
     fields = struct.unpack_from("<IHHHHHIIIHH", header, 0)
     name_len, extra_len = fields[9], fields[10]
     payload_start = member.local_header_offset + 30 + name_len + extra_len
-    payload_end = payload_start + member.compressed_size - 1
+    return payload_start, payload_start + member.compressed_size - 1
+
+
+def fetch_remote_member(url: str, member: RemoteZipMember) -> bytes:
+    payload_start, payload_end = _payload_bounds(url, member)
     compressed, _ = _request(url, payload_start, payload_end)
     if len(compressed) != member.compressed_size:
         raise HTTPRangeError(f"short range read for {member.name}")
@@ -144,6 +149,57 @@ def fetch_remote_member(url: str, member: RemoteZipMember) -> bytes:
     if (binascii.crc32(raw) & 0xFFFFFFFF) != member.crc32:
         raise HTTPRangeError(f"CRC-32 mismatch for {member.name}")
     return raw
+
+
+def stream_remote_member_to_file(
+    url: str,
+    member: RemoteZipMember,
+    output_path: str | Path,
+    *,
+    compressed_chunk_bytes: int = 8 << 20,
+) -> Path:
+    """Stream one remote member to disk with incremental inflate/CRC checking."""
+    if compressed_chunk_bytes <= 0:
+        raise ValueError("compressed_chunk_bytes must be positive")
+    payload_start, payload_end = _payload_bounds(url, member)
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    crc = 0
+    written = 0
+    decompressor = zlib.decompressobj(-15) if member.compression_method == 8 else None
+    if member.compression_method not in (0, 8):
+        raise HTTPRangeError(
+            f"unsupported compression method {member.compression_method} for {member.name}"
+        )
+
+    cursor = payload_start
+    with out.open("wb") as handle:
+        while cursor <= payload_end:
+            end = min(payload_end, cursor + compressed_chunk_bytes - 1)
+            chunk, _ = _request(url, cursor, end)
+            expected = end - cursor + 1
+            if len(chunk) != expected:
+                raise HTTPRangeError(f"short range read for {member.name} at {cursor}")
+            raw = chunk if decompressor is None else decompressor.decompress(chunk)
+            if raw:
+                handle.write(raw)
+                written += len(raw)
+                crc = binascii.crc32(raw, crc)
+            cursor = end + 1
+        if decompressor is not None:
+            tail = decompressor.flush()
+            if tail:
+                handle.write(tail)
+                written += len(tail)
+                crc = binascii.crc32(tail, crc)
+
+    if written != member.uncompressed_size:
+        out.unlink(missing_ok=True)
+        raise HTTPRangeError(f"uncompressed-size mismatch for {member.name}")
+    if (crc & 0xFFFFFFFF) != member.crc32:
+        out.unlink(missing_ok=True)
+        raise HTTPRangeError(f"CRC-32 mismatch for {member.name}")
+    return out
 
 
 def fetch_named_member(url: str, name: str) -> tuple[RemoteZipMember, bytes]:
