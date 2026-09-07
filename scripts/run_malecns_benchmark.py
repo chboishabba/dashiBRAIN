@@ -3,6 +3,10 @@
 
 Mock mode exercises mechanics only. Real mode never substitutes hash-derived
 observations: empirical stages run only when their real artifacts exist.
+
+The structure/function experiment is BIDI at the region seam. Functional input
+may arrive either through the historical unit-level + registration route or as
+an independently declared region-resolved producer in a named atlas vocabulary.
 """
 
 from __future__ import annotations
@@ -31,6 +35,7 @@ from dashi.io.artifact_verification import verify_consumer_artifacts
 from dashi.io.functional_imaging_loader import aggregate_functional_traces_by_region, load_functional_traces, load_registration_map
 from dashi.io.malecns_manifest import MaleCNSManifest
 from dashi.io.malecns_real_data import MALECNS_REAL_AUTHORITIES
+from dashi.io.region_functional_adapter import load_region_functional_producer
 
 
 def _canonical_sha256(payload: Any) -> str:
@@ -90,56 +95,7 @@ def _mock_structure_function(nodes: list[str]) -> dict[str, Any]:
     }
 
 
-def _real_structure_function(manifest: MaleCNSManifest) -> dict[str, Any]:
-    required = (
-        "connectome_weights_significant",
-        "body_annotations",
-        "functional_trial_calcium",
-        "registration_bifrost_map",
-    )
-    missing = [k for k in required if not manifest.is_present(k)]
-    if missing:
-        return {"status": "unavailable", "missing_artifacts": missing}
-
-    from dashi.io.malecns_loader import load_malecns_graph
-    from dashi.io.malecns_signs import signed_adjacency_for_graph
-
-    graph = load_malecns_graph(
-        manifest.target_path("connectome_weights_significant"),
-        annotations_path=manifest.target_path("body_annotations"),
-        signed_by_transmitter=False,
-    )
-    signed_adjacency = None
-    if manifest.is_present("body_neurotransmitters"):
-        signed_adjacency = signed_adjacency_for_graph(
-            graph,
-            manifest.target_path("body_neurotransmitters"),
-        )
-
-    # Actual MaleCNS v1.0 exposes somaNeuromere. It is a defensible coarse
-    # biological grouping, not a claim of direct functional-neuron identity.
-    region_col = _metadata_column(
-        graph,
-        ("somaNeuromere", "neuromere", "neuropil", "region", "primary_neuropil", "soma_neuropil"),
-    )
-    if region_col is None:
-        return {
-            "status": "unavailable",
-            "reason": "connectome annotations expose no recognized region/neuromere column",
-            "available_metadata": sorted(graph.metadata or {}),
-        }
-
-    functional = load_functional_traces(manifest.target_path("functional_trial_calcium"))
-    registration = load_registration_map(manifest.target_path("registration_bifrost_map"))
-    functional_region = aggregate_functional_traces_by_region(functional, registration)
-
-    node_regions = [str(x) for x in graph.metadata[region_col]]
-    structural = aggregate_connectome_by_region(
-        graph.carrier,
-        node_regions,
-        signed_adjacency=signed_adjacency,
-    )
-
+def _evaluate_region_carriers(structural, functional_region, *, region_col: str, functional_source: dict[str, Any], registration_identity_fraction: float) -> dict[str, Any]:
     functional_region_set = set(functional_region.unit_ids)
     common = tuple(r for r in structural.regions if r in functional_region_set)
     if len(common) < 3:
@@ -149,6 +105,7 @@ def _real_structure_function(manifest: MaleCNSManifest) -> dict[str, Any]:
             "structural_region_count": len(structural.regions),
             "functional_region_count": len(functional_region.unit_ids),
             "structural_region_field": region_col,
+            "functional_source": functional_source,
         }
 
     structural_index = {r: i for i, r in enumerate(structural.regions)}
@@ -192,9 +149,10 @@ def _real_structure_function(manifest: MaleCNSManifest) -> dict[str, Any]:
 
     return {
         "status": "real_region_level",
-        "resolution": "soma_neuromere_or_registered_region",
+        "resolution": "shared_declared_region_carrier",
         "structural_region_field": region_col,
-        "direct_neuron_identity_fraction": registration.direct_identity_fraction(),
+        "functional_source": functional_source,
+        "direct_neuron_identity_fraction": registration_identity_fraction,
         "regions": list(common),
         "fit_pair_count": result.fit_pair_count,
         "held_out_pair_count": result.held_out_pair_count,
@@ -208,7 +166,102 @@ def _real_structure_function(manifest: MaleCNSManifest) -> dict[str, Any]:
     }
 
 
-def run_benchmark(base_dir: str = "data/malecns", mock_run: bool = False, output_path: str | None = None) -> dict:
+def _real_structure_function(
+    manifest: MaleCNSManifest,
+    *,
+    region_functional_path: str | None = None,
+    region_functional_atlas: str | None = None,
+    region_functional_source: str | None = None,
+) -> dict[str, Any]:
+    structural_required = ("connectome_weights_significant", "body_annotations")
+    missing_structural = [k for k in structural_required if not manifest.is_present(k)]
+    if missing_structural:
+        return {"status": "unavailable", "missing_artifacts": missing_structural}
+
+    using_region_producer = region_functional_path is not None
+    if using_region_producer and (not region_functional_atlas or not region_functional_source):
+        return {
+            "status": "unavailable",
+            "reason": "region-resolved functional producer requires --region-functional-atlas and --region-functional-source",
+        }
+    if not using_region_producer:
+        missing = [k for k in ("functional_trial_calcium", "registration_bifrost_map") if not manifest.is_present(k)]
+        if missing:
+            return {"status": "unavailable", "missing_artifacts": missing}
+
+    from dashi.io.malecns_loader import load_malecns_graph
+    from dashi.io.malecns_signs import signed_adjacency_for_graph
+
+    graph = load_malecns_graph(
+        manifest.target_path("connectome_weights_significant"),
+        annotations_path=manifest.target_path("body_annotations"),
+        signed_by_transmitter=False,
+    )
+    signed_adjacency = None
+    if manifest.is_present("body_neurotransmitters"):
+        signed_adjacency = signed_adjacency_for_graph(graph, manifest.target_path("body_neurotransmitters"))
+
+    region_col = _metadata_column(
+        graph,
+        ("somaNeuromere", "neuromere", "neuropil", "region", "primary_neuropil", "soma_neuropil"),
+    )
+    if region_col is None:
+        return {
+            "status": "unavailable",
+            "reason": "connectome annotations expose no recognized region/neuromere column",
+            "available_metadata": sorted(graph.metadata or {}),
+        }
+
+    node_regions = [str(x) for x in graph.metadata[region_col]]
+    structural = aggregate_connectome_by_region(
+        graph.carrier,
+        node_regions,
+        signed_adjacency=signed_adjacency,
+    )
+
+    if using_region_producer:
+        producer = load_region_functional_producer(
+            region_functional_path,
+            atlas_identifier=str(region_functional_atlas),
+            source_identifier=str(region_functional_source),
+        )
+        functional_region = producer.traces
+        functional_source = {
+            "mode": "declared_region_resolved",
+            "atlas_identifier": producer.atlas_identifier,
+            "source_identifier": producer.source_identifier,
+            "evidence_kind": producer.evidence_kind,
+        }
+        identity_fraction = 0.0
+    else:
+        functional = load_functional_traces(manifest.target_path("functional_trial_calcium"))
+        registration = load_registration_map(manifest.target_path("registration_bifrost_map"))
+        functional_region = aggregate_functional_traces_by_region(functional, registration)
+        functional_source = {
+            "mode": "unit_level_plus_registration",
+            "source_identifier": str(manifest.target_path("functional_trial_calcium")),
+            "registration_identifier": str(manifest.target_path("registration_bifrost_map")),
+        }
+        identity_fraction = registration.direct_identity_fraction()
+
+    return _evaluate_region_carriers(
+        structural,
+        functional_region,
+        region_col=region_col,
+        functional_source=functional_source,
+        registration_identity_fraction=identity_fraction,
+    )
+
+
+def run_benchmark(
+    base_dir: str = "data/malecns",
+    mock_run: bool = False,
+    output_path: str | None = None,
+    *,
+    region_functional_path: str | None = None,
+    region_functional_atlas: str | None = None,
+    region_functional_source: str | None = None,
+) -> dict:
     manifest = MaleCNSManifest(base_dir=base_dir)
     prov_graph = manifest.build_provenance_graph()
     paths = _paths(manifest)
@@ -216,6 +269,8 @@ def run_benchmark(base_dir: str = "data/malecns", mock_run: bool = False, output
     print("=== MaleCNS Dependence-Aware Benchmark ===")
     print(f"Base Data Directory: {manifest.base_dir}")
     print(f"Mock Run Mode: {mock_run}")
+    if region_functional_path:
+        print(f"Region-resolved functional producer: {region_functional_path}")
 
     rel_same_trial = classify_evidence_relation(prov_graph, "functional_trial_calcium", "behaviour_fictrac_kinematics")
     rel_cross_animal = classify_evidence_relation(prov_graph, "connectome_weights_significant", "functional_trial_calcium")
@@ -235,8 +290,13 @@ def run_benchmark(base_dir: str = "data/malecns", mock_run: bool = False, output
         metrics = _mock_structure_function([f"body_{i:04d}" for i in range(100)])
         global_mode = BenchmarkRunMode.MOCK
     else:
-        metrics = _real_structure_function(manifest)
-        any_real = any(v.all_present for v in consumer_verification.values())
+        metrics = _real_structure_function(
+            manifest,
+            region_functional_path=region_functional_path,
+            region_functional_atlas=region_functional_atlas,
+            region_functional_source=region_functional_source,
+        )
+        any_real = any(v.all_present for v in consumer_verification.values()) or bool(region_functional_path)
         any_verified = any(v.all_hash_verified for v in consumer_verification.values())
         global_mode = (
             BenchmarkRunMode.REAL_HASH_VERIFIED if any_verified
@@ -261,24 +321,24 @@ def run_benchmark(base_dir: str = "data/malecns", mock_run: bool = False, output
         input_present = bool(verification and verification.all_present)
         mode = BenchmarkRunMode.MOCK if mock_run else (
             BenchmarkRunMode.REAL_HASH_VERIFIED if input_verified
+            else BenchmarkRunMode.REAL_UNVERIFIED if (input_present or region_functional_path) and consumer is EvidenceConsumer.STRUCTURE_FUNCTION
             else BenchmarkRunMode.REAL_UNVERIFIED if input_present
             else BenchmarkRunMode.SYNTHETIC
         )
         registration_verified = (
             consumer is not EvidenceConsumer.STRUCTURE_FUNCTION
+            or bool(region_functional_path)
             or bool(
                 verification
                 and verification.artifacts.get("registration_bifrost_map")
                 and verification.artifacts["registration_bifrost_map"].hash_verified
             )
         )
-        # The result payload is digested below. It is an integrity receipt, not
-        # an independently pre-pinned scientific authority; empirical promotion
-        # still requires all consumer inputs and the real evaluated stage.
         output_verified = (
             not mock_run
             and metrics.get("status") == "real_region_level"
             and input_verified
+            and not region_functional_path
         )
         run_status = RunEvidenceStatus(
             mode=mode,
@@ -316,6 +376,7 @@ def run_benchmark(base_dir: str = "data/malecns", mock_run: bool = False, output
             "cross_animal_motor_atlas_is_not_same_animal_identity": True,
             "repository_doi_is_not_direct_file_receipt": True,
             "fit_pairs_are_disjoint_from_held_out_pairs": True,
+            "declared_region_identity_is_not_direct_neuron_identity": True,
         },
     }
     summary["result_payload_sha256"] = _canonical_sha256(summary)
@@ -341,8 +402,18 @@ def main() -> None:
     parser.add_argument("--base-dir", default="data/malecns")
     parser.add_argument("--mock-run", action="store_true")
     parser.add_argument("--output")
+    parser.add_argument("--region-functional", help="functional table already indexed by declared region IDs")
+    parser.add_argument("--region-functional-atlas", help="atlas/vocabulary identifier for --region-functional")
+    parser.add_argument("--region-functional-source", help="source/provenance identifier for --region-functional")
     args = parser.parse_args()
-    run_benchmark(args.base_dir, args.mock_run, args.output)
+    run_benchmark(
+        args.base_dir,
+        args.mock_run,
+        args.output,
+        region_functional_path=args.region_functional,
+        region_functional_atlas=args.region_functional_atlas,
+        region_functional_source=args.region_functional_source,
+    )
 
 
 if __name__ == "__main__":
