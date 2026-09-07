@@ -10,8 +10,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import binascii
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 import struct
+import time
+import urllib.error
 import urllib.request
 import zlib
 
@@ -30,13 +33,59 @@ class HTTPRangeError(RuntimeError):
     pass
 
 
-def _request(url: str, start: int | None = None, end: int | None = None) -> tuple[bytes, object]:
+_RETRYABLE_HTTP_STATUS = {429, 500, 502, 503, 504}
+
+
+def _retry_delay_seconds(headers: object | None, attempt: int, base: float, cap: float) -> float:
+    retry_after = headers.get("Retry-After") if headers is not None and hasattr(headers, "get") else None
+    if retry_after:
+        try:
+            return min(cap, max(0.0, float(retry_after)))
+        except (TypeError, ValueError):
+            try:
+                retry_at = parsedate_to_datetime(str(retry_after))
+                now = parsedate_to_datetime(parsedate_to_datetime(time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())).strftime("%a, %d %b %Y %H:%M:%S GMT"))
+                return min(cap, max(0.0, (retry_at - now).total_seconds()))
+            except Exception:
+                pass
+    return min(cap, base * (2 ** attempt))
+
+
+def _request(
+    url: str,
+    start: int | None = None,
+    end: int | None = None,
+    *,
+    max_attempts: int = 6,
+    retry_base_seconds: float = 1.0,
+    retry_cap_seconds: float = 30.0,
+    timeout_seconds: float = 120.0,
+) -> tuple[bytes, object]:
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be >= 1")
     headers = {"User-Agent": "dashiBRAIN-RemoteZip/1.0"}
     if start is not None:
         headers["Range"] = f"bytes={start}-{'' if end is None else end}"
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req) as resp:
-        return resp.read(), resp.headers
+
+    last_error: BaseException | None = None
+    for attempt in range(max_attempts):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+                return resp.read(), resp.headers
+        except urllib.error.HTTPError as exc:
+            last_error = exc
+            if exc.code not in _RETRYABLE_HTTP_STATUS or attempt + 1 >= max_attempts:
+                raise
+            delay = _retry_delay_seconds(exc.headers, attempt, retry_base_seconds, retry_cap_seconds)
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            last_error = exc
+            if attempt + 1 >= max_attempts:
+                raise
+            delay = min(retry_cap_seconds, retry_base_seconds * (2 ** attempt))
+        time.sleep(delay)
+
+    raise HTTPRangeError(f"remote request failed after {max_attempts} attempts: {last_error}")
 
 
 def remote_size(url: str) -> int:
@@ -151,53 +200,113 @@ def fetch_remote_member(url: str, member: RemoteZipMember) -> bytes:
     return raw
 
 
+def _replay_partial_stream(
+    url: str,
+    member: RemoteZipMember,
+    output_path: Path,
+    payload_start: int,
+    compressed_chunk_bytes: int,
+) -> tuple[int, int, int, zlib.Decompress | None]:
+    """Rebuild inflater/CRC state up to an existing partial output file.
+
+    Deflate state cannot be resumed from decompressed bytes alone, so an interrupted
+    stream replays already-consumed compressed ranges from the remote archive while
+    discarding their raw output. This preserves the local partial file and avoids
+    redownloading/writing those uncompressed bytes. Replay stops when the generated
+    raw byte count exactly reaches the partial file size.
+    """
+    existing = output_path.stat().st_size if output_path.exists() else 0
+    decompressor = zlib.decompressobj(-15) if member.compression_method == 8 else None
+    if existing == 0:
+        return payload_start, 0, 0, decompressor
+
+    crc = 0
+    produced = 0
+    cursor = payload_start
+    with output_path.open("rb") as existing_handle:
+        while produced < existing:
+            end = min(payload_start + member.compressed_size - 1, cursor + compressed_chunk_bytes - 1)
+            chunk, _ = _request(url, cursor, end)
+            raw = chunk if decompressor is None else decompressor.decompress(chunk)
+            if raw:
+                expected = existing_handle.read(len(raw))
+                if len(expected) < len(raw):
+                    raw = raw[: len(expected)]
+                if expected != raw:
+                    raise HTTPRangeError(f"partial output does not match replayed stream for {member.name}")
+                produced += len(raw)
+                crc = binascii.crc32(raw, crc)
+            cursor = end + 1
+            if cursor > payload_start + member.compressed_size - 1 and produced < existing:
+                raise HTTPRangeError(f"partial output exceeds reconstructed stream for {member.name}")
+    if produced != existing:
+        raise HTTPRangeError(
+            f"partial output boundary is not aligned to a streamed deflate boundary for {member.name}"
+        )
+    return cursor, produced, crc, decompressor
+
+
 def stream_remote_member_to_file(
     url: str,
     member: RemoteZipMember,
     output_path: str | Path,
     *,
     compressed_chunk_bytes: int = 8 << 20,
+    resume: bool = True,
 ) -> Path:
-    """Stream one remote member to disk with incremental inflate/CRC checking."""
+    """Stream one remote member to disk with retries, resume, inflate and CRC checks."""
     if compressed_chunk_bytes <= 0:
         raise ValueError("compressed_chunk_bytes must be positive")
     payload_start, payload_end = _payload_bounds(url, member)
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    crc = 0
-    written = 0
-    decompressor = zlib.decompressobj(-15) if member.compression_method == 8 else None
     if member.compression_method not in (0, 8):
         raise HTTPRangeError(
             f"unsupported compression method {member.compression_method} for {member.name}"
         )
 
-    cursor = payload_start
-    with out.open("wb") as handle:
-        while cursor <= payload_end:
-            end = min(payload_end, cursor + compressed_chunk_bytes - 1)
-            chunk, _ = _request(url, cursor, end)
-            expected = end - cursor + 1
-            if len(chunk) != expected:
-                raise HTTPRangeError(f"short range read for {member.name} at {cursor}")
-            raw = chunk if decompressor is None else decompressor.decompress(chunk)
-            if raw:
-                handle.write(raw)
-                written += len(raw)
-                crc = binascii.crc32(raw, crc)
-            cursor = end + 1
-        if decompressor is not None:
-            tail = decompressor.flush()
-            if tail:
-                handle.write(tail)
-                written += len(tail)
-                crc = binascii.crc32(tail, crc)
+    if resume and out.exists() and out.stat().st_size > 0:
+        cursor, written, crc, decompressor = _replay_partial_stream(
+            url, member, out, payload_start, compressed_chunk_bytes
+        )
+        mode = "ab"
+    else:
+        cursor = payload_start
+        written = 0
+        crc = 0
+        decompressor = zlib.decompressobj(-15) if member.compression_method == 8 else None
+        mode = "wb"
+
+    try:
+        with out.open(mode) as handle:
+            while cursor <= payload_end:
+                end = min(payload_end, cursor + compressed_chunk_bytes - 1)
+                chunk, _ = _request(url, cursor, end)
+                expected = end - cursor + 1
+                if len(chunk) != expected:
+                    raise HTTPRangeError(f"short range read for {member.name} at {cursor}")
+                raw = chunk if decompressor is None else decompressor.decompress(chunk)
+                if raw:
+                    handle.write(raw)
+                    handle.flush()
+                    written += len(raw)
+                    crc = binascii.crc32(raw, crc)
+                cursor = end + 1
+            if decompressor is not None:
+                tail = decompressor.flush()
+                if tail:
+                    handle.write(tail)
+                    handle.flush()
+                    written += len(tail)
+                    crc = binascii.crc32(tail, crc)
+    except Exception:
+        # Keep verified prefix for the next invocation. Resume will replay remote
+        # compressed ranges to reconstruct inflater/CRC state before appending.
+        raise
 
     if written != member.uncompressed_size:
-        out.unlink(missing_ok=True)
         raise HTTPRangeError(f"uncompressed-size mismatch for {member.name}")
     if (crc & 0xFFFFFFFF) != member.crc32:
-        out.unlink(missing_ok=True)
         raise HTTPRangeError(f"CRC-32 mismatch for {member.name}")
     return out
 
