@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import csv
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
 
 import h5py
 import numpy as np
@@ -24,6 +24,7 @@ from dashi.analysis.gauthey_lbm_experiment import (
     LBM_MIN_TIMEPOINTS,
     load_deposited_lbm_selected,
 )
+from dashi.io.functional_imaging_loader import FunctionalTraceTable
 
 LBM_NATIVE_HEIGHT = 226
 LBM_NATIVE_WIDTH = 512
@@ -61,6 +62,25 @@ class NativeFunctionalField:
     traces_roi_by_time: np.ndarray
     selected_label_volume: np.ndarray  # [plane, y, x], value = selected_row + 1
     rois: tuple[NativeSelectedROI, ...]
+
+
+@dataclass(frozen=True)
+class NativeAtlasAssignment:
+    selected_row: int
+    atlas_region_id: int
+    atlas_region: str
+    voxel_count: int
+    overlap_voxel_count: int
+    overlap_fraction: float
+
+
+@dataclass(frozen=True)
+class NativeAtlasCompilation:
+    region_traces: FunctionalTraceTable
+    assignments: tuple[NativeAtlasAssignment, ...]
+    assigned_selected_count: int
+    unassigned_selected_count: int
+    minimum_overlap_fraction: float
 
 
 def load_recovered_identity_csv(path: str | Path) -> tuple[RecoveredSelectedROI, ...]:
@@ -108,7 +128,6 @@ def _source_oriented_label_volume(arr: np.ndarray) -> np.ndarray:
     if raw.shape == (LBM_N_PLANES, LBM_PIXELS_PER_PLANE):
         source_loaded = raw.T
     elif raw.shape == (LBM_PIXELS_PER_PLANE, LBM_N_PLANES):
-        # Already in the orientation returned by the source loadmat_h5 helper.
         source_loaded = raw
     elif raw.shape == (LBM_NATIVE_HEIGHT, LBM_NATIVE_WIDTH, LBM_N_PLANES):
         return np.moveaxis(raw, 2, 0)
@@ -208,6 +227,83 @@ def compile_native_selected_field(
         traces_roi_by_time=np.asarray(traces[selected_array, :], dtype=float).copy(),
         selected_label_volume=label_volume,
         rois=tuple(native_rois),
+    )
+
+
+def aggregate_native_selected_field_to_regions(
+    field: NativeFunctionalField,
+    atlas_labels_on_native_grid: np.ndarray,
+    atlas_region_names: Mapping[int, str],
+    *,
+    minimum_overlap_fraction: float = 0.5,
+) -> NativeAtlasCompilation:
+    """Aggregate recovered selected traces after atlas labels are on the native grid.
+
+    ``atlas_labels_on_native_grid`` must already be transformed/resampled onto
+    exactly the same ``[plane,y,x]`` grid as ``field.selected_label_volume``.
+    This function does not perform or infer registration.
+    """
+    atlas = np.asarray(atlas_labels_on_native_grid)
+    if atlas.shape != field.selected_label_volume.shape:
+        raise ValueError("atlas labels must already be on the native [plane,y,x] grid")
+    if not (0.0 < minimum_overlap_fraction <= 1.0):
+        raise ValueError("minimum_overlap_fraction must be in (0,1]")
+
+    assignments: list[NativeAtlasAssignment] = []
+    by_region_trace_indices: dict[str, list[int]] = {}
+
+    for trace_index, roi in enumerate(field.rois):
+        mask = field.selected_label_volume == (roi.selected_row + 1)
+        voxel_count = int(np.count_nonzero(mask))
+        if voxel_count == 0:
+            raise ValueError(f"native field lost selected-row mask {roi.selected_row}")
+        vals = atlas[mask].astype(int, copy=False)
+        labels, counts = np.unique(vals, return_counts=True)
+        valid = [
+            (int(label), int(count))
+            for label, count in zip(labels, counts)
+            if int(label) in atlas_region_names
+        ]
+        if not valid:
+            continue
+        region_id, overlap = max(valid, key=lambda pair: pair[1])
+        fraction = overlap / voxel_count
+        if fraction < minimum_overlap_fraction:
+            continue
+        region = str(atlas_region_names[region_id])
+        assignments.append(
+            NativeAtlasAssignment(
+                selected_row=roi.selected_row,
+                atlas_region_id=region_id,
+                atlas_region=region,
+                voxel_count=voxel_count,
+                overlap_voxel_count=overlap,
+                overlap_fraction=float(fraction),
+            )
+        )
+        by_region_trace_indices.setdefault(region, []).append(trace_index)
+
+    if not by_region_trace_indices:
+        raise ValueError("no recovered selected ROIs satisfy atlas-overlap threshold")
+
+    regions = tuple(sorted(by_region_trace_indices))
+    region_traces = np.column_stack(
+        [
+            np.mean(field.traces_roi_by_time[by_region_trace_indices[region], :], axis=0)
+            for region in regions
+        ]
+    ).T
+    return NativeAtlasCompilation(
+        region_traces=FunctionalTraceTable(
+            regions,
+            region_traces,
+            None,
+            identity_kind="atlas_region_from_exact_selected_supervoxel_overlap",
+        ),
+        assignments=tuple(assignments),
+        assigned_selected_count=len(assignments),
+        unassigned_selected_count=len(field.rois) - len(assignments),
+        minimum_overlap_fraction=float(minimum_overlap_fraction),
     )
 
 
