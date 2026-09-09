@@ -42,9 +42,15 @@ LBM_TRIALS = (
     "04192024_6f_a1_r9",
 )
 
-LBM_SOURCE_PICKLE_NAMES = tuple(f"GCaMP6f_{trial}.pkl" for trial in LBM_TRIALS)
+# Segmentation IDs include the channel marker ``_6f_`` while the source aligned
+# dictionary/container names encode it in the ``GCaMP6f_`` prefix and therefore
+# omit the redundant middle token. Keep both namespaces explicit.
+LBM_SOURCE_STEMS = tuple(
+    f"GCaMP6f_{trial.replace('_6f_', '_', 1)}" for trial in LBM_TRIALS
+)
+LBM_SOURCE_PICKLE_NAMES = tuple(f"{stem}.pkl" for stem in LBM_SOURCE_STEMS)
 LBM_SOURCE_CONTAINER_MEMBERS = tuple(
-    f"Data/Dffs/Aligned/GCaMP6f_{trial}.zip" for trial in LBM_TRIALS
+    f"Data/Dffs/Aligned/{stem}.zip" for stem in LBM_SOURCE_STEMS
 )
 LBM_LABEL_MEMBERS = tuple(f"Data/Labels/{trial}_n2000_labels.h5" for trial in LBM_TRIALS)
 LBM_SELECTED_MEMBER = "Data/Dffs/Audio correlated/dffs_audio_LB_corr_top05_all.pkl"
@@ -217,8 +223,6 @@ def reconstruct_lbm_selected_from_trials(
 
     for trial_index, path in enumerate(trial_pickle_paths):
         traces = _load_trial_aligned(path)
-        # Use the source-faithful correlation calculation but retain a fixed
-        # local top 1,620 rather than the trial's own 0.5%.
         means = traces.mean(axis=1, keepdims=True)
         stds = traces.std(axis=1, keepdims=True)
         with np.errstate(divide="ignore", invalid="ignore"):
