@@ -8,13 +8,16 @@ from dataclasses import asdict
 import json
 from pathlib import Path
 
-from dashi.analysis.gauthey_lbm_experiment import GAUTHEY_DATA_ZIP_URL, LBM_TRIALS
+from dashi.analysis.gauthey_lbm_experiment import (
+    GAUTHEY_DATA_ZIP_URL,
+    LBM_SOURCE_CONTAINER_MEMBERS,
+    LBM_TRIALS,
+)
 from dashi.io.gauthey_reconstruction_receipt import (
     build_gauthey_reconstruction_receipt,
     write_gauthey_reconstruction_receipt,
 )
 from dashi.io.remote_zip import list_remote_zip
-from scripts.run_gauthey_lbm_remote_reconstruction import SOURCE_CONTAINER_MEMBERS
 
 
 def main() -> None:
@@ -34,7 +37,7 @@ def main() -> None:
     args = parser.parse_args()
 
     trial_index = LBM_TRIALS.index(args.trial)
-    expected_member = SOURCE_CONTAINER_MEMBERS[trial_index]
+    expected_member = LBM_SOURCE_CONTAINER_MEMBERS[trial_index]
     by_name = {member.name: member for member in list_remote_zip(args.url)}
     if expected_member not in by_name:
         raise SystemExit(
