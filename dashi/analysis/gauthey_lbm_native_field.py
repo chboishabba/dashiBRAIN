@@ -1,8 +1,8 @@
 """Compile recovered Gauthey LBM selected ROIs into a compact native-space field.
 
-This module is experiment-facing.  It combines exact recovered selected-row
+This module is experiment-facing. It combines exact recovered selected-row
 identities with the same-trial plane-local segmentation and the deposited
-selected trace matrix.  The result is a compact spatial carrier containing the
+selected trace matrix. The result is a compact spatial carrier containing the
 measured traces, one static voxel mask per recovered supervoxel (encoded as a
 selected-row label volume), and native pixel/plane centroids.
 
@@ -96,13 +96,33 @@ def load_recovered_identity_csv(path: str | Path) -> tuple[RecoveredSelectedROI,
     return tuple(rows)
 
 
-def load_gauthey_lbm_segmentation(path: str | Path) -> np.ndarray:
-    """Load Gauthey n2000 segmentation as [plane, y, x].
+def _source_oriented_label_volume(arr: np.ndarray) -> np.ndarray:
+    """Reproduce ``loadmat_h5(...)[\"labels\"].reshape((226,512,27))``.
 
-    The published Fig. 3 preprocessing reshapes the label carrier to
-    ``(226, 512, 27)``.  Deposited files commonly expose ``(27, 115712)``;
-    both layouts are accepted and normalized here.
+    Gauthey's published ``loadmat_h5`` transposes every numerical HDF5 dataset.
+    Therefore a deposited raw HDF5 label matrix shaped ``(27, 115712)`` becomes
+    ``(115712, 27)`` before the source code reshapes it to ``(226, 512, 27)``.
+    We reproduce that sequence exactly, then move the plane axis first.
     """
+    raw = np.asarray(arr)
+    if raw.shape == (LBM_N_PLANES, LBM_PIXELS_PER_PLANE):
+        source_loaded = raw.T
+    elif raw.shape == (LBM_PIXELS_PER_PLANE, LBM_N_PLANES):
+        # Already in the orientation returned by the source loadmat_h5 helper.
+        source_loaded = raw
+    elif raw.shape == (LBM_NATIVE_HEIGHT, LBM_NATIVE_WIDTH, LBM_N_PLANES):
+        return np.moveaxis(raw, 2, 0)
+    elif raw.shape == (LBM_N_PLANES, LBM_NATIVE_HEIGHT, LBM_NATIVE_WIDTH):
+        return raw
+    else:
+        raise ValueError(f"unexpected Gauthey LBM segmentation shape {raw.shape}")
+
+    y_x_plane = source_loaded.reshape(LBM_NATIVE_HEIGHT, LBM_NATIVE_WIDTH, LBM_N_PLANES)
+    return np.moveaxis(y_x_plane, 2, 0)
+
+
+def load_gauthey_lbm_segmentation(path: str | Path) -> np.ndarray:
+    """Load Gauthey n2000 segmentation as source-faithful ``[plane,y,x]``."""
     with h5py.File(path, "r") as handle:
         if "labels" in handle:
             arr = np.asarray(handle["labels"])
@@ -116,17 +136,7 @@ def load_gauthey_lbm_segmentation(path: str | Path) -> np.ndarray:
             if len(datasets) != 1:
                 raise ValueError("segmentation HDF5 must contain a unique labels dataset")
             arr = datasets[0]
-
-    arr = np.asarray(arr)
-    if arr.shape == (LBM_N_PLANES, LBM_PIXELS_PER_PLANE):
-        return arr.reshape(LBM_N_PLANES, LBM_NATIVE_HEIGHT, LBM_NATIVE_WIDTH)
-    if arr.shape == (LBM_PIXELS_PER_PLANE, LBM_N_PLANES):
-        return arr.T.reshape(LBM_N_PLANES, LBM_NATIVE_HEIGHT, LBM_NATIVE_WIDTH)
-    if arr.shape == (LBM_NATIVE_HEIGHT, LBM_NATIVE_WIDTH, LBM_N_PLANES):
-        return np.moveaxis(arr, 2, 0)
-    if arr.shape == (LBM_N_PLANES, LBM_NATIVE_HEIGHT, LBM_NATIVE_WIDTH):
-        return arr
-    raise ValueError(f"unexpected Gauthey LBM segmentation shape {arr.shape}")
+    return _source_oriented_label_volume(arr)
 
 
 def compile_native_selected_field(
@@ -136,12 +146,14 @@ def compile_native_selected_field(
     *,
     trial_id: str,
 ) -> NativeFunctionalField:
-    traces = np.asarray(deposited_selected, dtype=float)
+    traces = np.asarray(deposited_selected)
     if traces.shape != (LBM_EXPECTED_SELECTED, LBM_MIN_TIMEPOINTS):
         raise ValueError(
-            f"deposited selected matrix must have shape "
+            "deposited selected matrix must have shape "
             f"({LBM_EXPECTED_SELECTED}, {LBM_MIN_TIMEPOINTS})"
         )
+    if not np.issubdtype(traces.dtype, np.number):
+        raise ValueError("deposited selected matrix must be numeric")
     seg = np.asarray(segmentation)
     if seg.shape != (LBM_N_PLANES, LBM_NATIVE_HEIGHT, LBM_NATIVE_WIDTH):
         raise ValueError("segmentation must be normalized to [27, 226, 512]")
@@ -167,11 +179,9 @@ def compile_native_selected_field(
         yy, xx = np.nonzero(mask)
         if yy.size == 0:
             raise ValueError(
-                f"recovered cluster absent from segmentation: "
+                "recovered cluster absent from segmentation: "
                 f"plane={identity.plane_index} cluster={identity.cluster_index}"
             )
-        # Segmentation is a partition within a plane.  A nonzero collision would
-        # therefore indicate inconsistent selected identities or source geometry.
         occupied = label_volume[identity.plane_index][mask]
         if np.any(occupied != 0):
             raise ValueError("recovered selected supervoxel masks overlap unexpectedly")
@@ -195,7 +205,7 @@ def compile_native_selected_field(
     return NativeFunctionalField(
         trial_id=trial_id,
         selected_rows=selected_array,
-        traces_roi_by_time=traces[selected_array, :].copy(),
+        traces_roi_by_time=np.asarray(traces[selected_array, :], dtype=float).copy(),
         selected_label_volume=label_volume,
         rois=tuple(native_rois),
     )
