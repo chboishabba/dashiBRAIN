@@ -23,6 +23,7 @@ from dashi.analysis.gauthey_lbm_experiment import (
     LBM_EXPECTED_SELECTED,
     LBM_MIN_TIMEPOINTS,
     load_deposited_lbm_selected,
+    pooled_lbm_row_to_trial_plane_cluster,
 )
 from dashi.io.functional_imaging_loader import FunctionalTraceTable
 
@@ -98,16 +99,22 @@ def load_recovered_identity_csv(path: str | Path) -> tuple[RecoveredSelectedROI,
         if reader.fieldnames is None or not required.issubset(reader.fieldnames):
             raise ValueError("identity CSV lacks required reconstruction columns")
         for row in reader:
-            rows.append(
-                RecoveredSelectedROI(
-                    selected_row=int(row["selected_row"]),
-                    pooled_source_row=int(row["pooled_source_row"]),
-                    trial_id=str(row["trial_id"]),
-                    plane_index=int(row["plane_index"]),
-                    cluster_index=int(row["cluster_index"]),
-                    correlation=float(row["correlation"]),
-                )
+            identity = RecoveredSelectedROI(
+                selected_row=int(row["selected_row"]),
+                pooled_source_row=int(row["pooled_source_row"]),
+                trial_id=str(row["trial_id"]),
+                plane_index=int(row["plane_index"]),
+                cluster_index=int(row["cluster_index"]),
+                correlation=float(row["correlation"]),
             )
+            decoded = pooled_lbm_row_to_trial_plane_cluster(identity.pooled_source_row)
+            declared = (identity.trial_id, identity.plane_index, identity.cluster_index)
+            if decoded != declared:
+                raise ValueError(
+                    "recovered identity geometry disagrees with pooled_source_row: "
+                    f"selected_row={identity.selected_row} decoded={decoded!r} declared={declared!r}"
+                )
+            rows.append(identity)
     if not rows:
         raise ValueError("identity CSV contains no recovered rows")
     selected = [r.selected_row for r in rows]
