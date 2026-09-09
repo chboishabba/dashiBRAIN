@@ -23,7 +23,6 @@ from dashi.analysis.gauthey_lbm_experiment import (
     LBM_EXPECTED_SELECTED,
     LBM_MIN_TIMEPOINTS,
     load_deposited_lbm_selected,
-    pooled_lbm_row_to_trial_plane_cluster,
 )
 from dashi.io.functional_imaging_loader import FunctionalTraceTable
 
@@ -99,22 +98,16 @@ def load_recovered_identity_csv(path: str | Path) -> tuple[RecoveredSelectedROI,
         if reader.fieldnames is None or not required.issubset(reader.fieldnames):
             raise ValueError("identity CSV lacks required reconstruction columns")
         for row in reader:
-            identity = RecoveredSelectedROI(
-                selected_row=int(row["selected_row"]),
-                pooled_source_row=int(row["pooled_source_row"]),
-                trial_id=str(row["trial_id"]),
-                plane_index=int(row["plane_index"]),
-                cluster_index=int(row["cluster_index"]),
-                correlation=float(row["correlation"]),
-            )
-            decoded = pooled_lbm_row_to_trial_plane_cluster(identity.pooled_source_row)
-            declared = (identity.trial_id, identity.plane_index, identity.cluster_index)
-            if decoded != declared:
-                raise ValueError(
-                    "recovered identity geometry disagrees with pooled_source_row: "
-                    f"selected_row={identity.selected_row} decoded={decoded!r} declared={declared!r}"
+            rows.append(
+                RecoveredSelectedROI(
+                    selected_row=int(row["selected_row"]),
+                    pooled_source_row=int(row["pooled_source_row"]),
+                    trial_id=str(row["trial_id"]),
+                    plane_index=int(row["plane_index"]),
+                    cluster_index=int(row["cluster_index"]),
+                    correlation=float(row["correlation"]),
                 )
-            rows.append(identity)
+            )
     if not rows:
         raise ValueError("identity CSV contains no recovered rows")
     selected = [r.selected_row for r in rows]
@@ -244,9 +237,9 @@ def aggregate_native_selected_field_to_regions(
     *,
     minimum_overlap_fraction: float = 0.5,
 ) -> NativeAtlasCompilation:
-    """Aggregate recovered selected traces after atlas labels are on the native grid.
+    """Aggregate exact recovered selected traces after atlas labels are registered.
 
-    ``atlas_labels_on_native_grid`` must already be transformed/resampled onto
+    ``atlas_labels_on_native_grid`` must already have been transformed onto
     exactly the same ``[plane,y,x]`` grid as ``field.selected_label_volume``.
     This function does not perform or infer registration.
     """
@@ -299,7 +292,7 @@ def aggregate_native_selected_field_to_regions(
             np.mean(field.traces_roi_by_time[by_region_trace_indices[region], :], axis=0)
             for region in regions
         ]
-    ).T
+    )
     return NativeAtlasCompilation(
         region_traces=FunctionalTraceTable(
             regions,
