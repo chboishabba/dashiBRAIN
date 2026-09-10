@@ -134,6 +134,24 @@ def main() -> None:
         correlation_threshold=args.correlation_threshold,
     )
 
+    fold_null_by_region: dict[str, dict[str, float]] = {}
+    if (
+        blocked_null.null_fold_residuals is not None
+        and blocked_null.observed_fold_residuals is not None
+        and blocked_null.fold_empirical_p_values is not None
+    ):
+        for i, region in enumerate(blocked_null.fold_regions):
+            null_col = blocked_null.null_fold_residuals[:, i]
+            fold_null_by_region[region] = {
+                "observed_mean_residual": float(blocked_null.observed_fold_residuals[i]),
+                "permutation_p": float(blocked_null.fold_empirical_p_values[i]),
+                "null_mean_residual": float(np.mean(null_col)),
+                "null_median_residual": float(np.median(null_col)),
+                "null_q05_residual": float(np.quantile(null_col, 0.05)),
+                "null_q95_residual": float(np.quantile(null_col, 0.95)),
+                "fraction_nulls_beaten": float(np.mean(blocked_null.observed_fold_residuals[i] < null_col)),
+            }
+
     payload = {
         "status": "real_region_level_ndim_fibre_comparator",
         "regions": list(common),
@@ -179,6 +197,7 @@ def main() -> None:
             "region_label_permutation_null_p": blocked_null.empirical_p_value,
             "null_mean_residual": float(np.mean(blocked_null.null_residuals)),
             "null_min_residual": float(np.min(blocked_null.null_residuals)),
+            "fold_matched_nulls": fold_null_by_region,
             "folds": [
                 {
                     "held_out_region": f.held_out_region,
@@ -190,6 +209,12 @@ def main() -> None:
                 }
                 for f in blocked.folds
             ],
+        },
+        "interpretation_boundaries": {
+            "loro_lower_than_pair_residual_implies_stronger_absolute_performance": False,
+            "loro_permutation_p_below_0_10_implies_confirmed_structure_function_coupling": False,
+            "foldwise_nominal_p_values_are_multiplicity_corrected": False,
+            "single_animal_region_level_result_implies_population_generalization": False,
         },
         "firewalls": {
             "compatibility_selection_uses_functional_outcomes": False,
