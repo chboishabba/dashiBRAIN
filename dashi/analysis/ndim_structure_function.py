@@ -3,12 +3,18 @@
 This module applies the repo-wide graph-colouring/NDim lesson to Fly:
 keep structurally distinct candidate fibres separate, remove only structurally
 redundant candidates using training-feature geometry, then compose the surviving
-family for the functional consumer.  Functional observations are *not* used to
+family for the functional consumer. Functional observations are *not* used to
 select the compatible fibre family.
 
-The present functional consumer is symmetric region correlation.  Directed
+The present functional consumer is symmetric region correlation. Directed
 connectome structure is therefore exposed as forward/reverse fibres rather than
 silently comparing one arbitrary direction to a symmetric target.
+
+Pair-held-out evaluation is useful but not sufficient for region-level
+externalization because the same neuropils can appear in both train and test
+pairs. This module therefore also provides leave-one-region-out evaluation and
+region-label permutation nulls that refit the complete fibre consumer inside
+each null replicate.
 """
 
 from __future__ import annotations
@@ -53,6 +59,41 @@ class NDimHeldoutResult:
         return float(np.mean(self.held_out_residuals))
 
 
+@dataclass(frozen=True)
+class RegionHoldoutFoldResult:
+    held_out_region: str
+    train_pair_count: int
+    held_out_pair_count: int
+    mean_residual: float
+    selected_fibres: tuple[str, ...]
+    coefficients: np.ndarray
+
+
+@dataclass(frozen=True)
+class RegionBlockedResult:
+    folds: tuple[RegionHoldoutFoldResult, ...]
+
+    @property
+    def mean_fold_residual(self) -> float:
+        return float(np.mean([f.mean_residual for f in self.folds]))
+
+    @property
+    def weighted_mean_residual(self) -> float:
+        total = sum(f.held_out_pair_count for f in self.folds)
+        if total == 0:
+            return float("nan")
+        return float(
+            sum(f.mean_residual * f.held_out_pair_count for f in self.folds) / total
+        )
+
+
+@dataclass(frozen=True)
+class PermutationNullResult:
+    observed_residual: float
+    null_residuals: np.ndarray
+    empirical_p_value: float
+
+
 def _safe_row_normalize_dense(a: np.ndarray) -> np.ndarray:
     x = np.asarray(a, dtype=float)
     denom = np.sum(np.abs(x), axis=1)
@@ -65,7 +106,7 @@ def _safe_row_normalize_dense(a: np.ndarray) -> np.ndarray:
 def build_ndim_structural_fibres(structural: RegionStructuralFeatures) -> StructuralFibreFamily:
     """Expose the current structural carrier as distinct consumer-facing fibres.
 
-    No weights are assigned here.  The axes are declared structural hypotheses:
+    No weights are assigned here. The axes are declared structural hypotheses:
     directed direct/path influence, shared-input/shared-output similarity, and
     signed directed influence when transmitter signs are available.
     """
@@ -74,9 +115,6 @@ def build_ndim_structural_fibres(structural: RegionStructuralFeatures) -> Struct
     if direct.shape != two_hop.shape or direct.ndim != 2 or direct.shape[0] != direct.shape[1]:
         raise ValueError("direct and two_hop must be aligned square region matrices")
 
-    # Shared-neighbour fibres are formed from the same row-normalized region
-    # carrier.  They are symmetric by construction and encode a different
-    # structural relation from directed reachability.
     p = _safe_row_normalize_dense(direct)
     common_input = p.T @ p
     common_output = p @ p.T
@@ -111,14 +149,7 @@ def select_compatible_fibres(
     minimum_scale: float = 1e-12,
     priority: Sequence[str] | None = None,
 ) -> FibreCompatibilitySelection:
-    """Select a structurally non-redundant fibre family without using outcomes.
-
-    Candidates with negligible training variation are removed.  Remaining
-    candidates are visited in declared order and rejected only when their
-    absolute training-feature correlation with an already selected fibre meets
-    ``correlation_threshold``.  This is the Fly analogue of building a conflict
-    graph before composing a compatible reduction family.
-    """
+    """Select a structurally non-redundant fibre family without using outcomes."""
     if not (0.0 <= correlation_threshold <= 1.0):
         raise ValueError("correlation_threshold must be in [0,1]")
     fit = np.asarray(fit_mask, dtype=bool)
@@ -166,16 +197,13 @@ def fit_ndim_fibre_consumer(
     *,
     correlation_threshold: float = 0.98,
 ) -> NDimHeldoutResult:
-    """Fit only the compatible fibre composition on training pairs.
-
-    Compatibility selection sees structural features only.  Feature centering,
-    scaling, and least-squares coefficients are learned only from training
-    pairs.  Held-out observations are read only after the model is frozen.
-    """
+    """Fit only the compatible fibre composition on training pairs."""
     fit = np.asarray(fit_mask, dtype=bool)
     held = np.asarray(held_out_mask, dtype=bool)
     if np.any(fit & held):
         raise ValueError("fit and held-out masks must be disjoint")
+    if not np.any(fit) or not np.any(held):
+        raise ValueError("fit and held-out masks must both select region pairs")
     selection = select_compatible_fibres(
         family, fit, correlation_threshold=correlation_threshold
     )
@@ -191,8 +219,6 @@ def fit_ndim_fibre_consumer(
     z_train = (x_train - means) / scales
     z_held = (x_held - means) / scales
 
-    # Include a training-fitted intercept.  No held-out value participates in
-    # feature selection, normalization, coefficient fitting, or intercept fit.
     design_train = np.column_stack([np.ones(z_train.shape[0]), z_train])
     beta, *_ = np.linalg.lstsq(design_train, y_train, rcond=None)
     prediction = np.column_stack([np.ones(z_held.shape[0]), z_held]) @ beta
@@ -209,3 +235,120 @@ def fit_ndim_fibre_consumer(
         held_out_pair_count=int(np.sum(held)),
         compatibility=selection,
     )
+
+
+def leave_one_region_out_masks(n: int, held_out_region_index: int) -> tuple[np.ndarray, np.ndarray]:
+    """Train on pairs excluding one region; test on every pair touching it."""
+    if n < 3:
+        raise ValueError("at least three regions are required")
+    if not (0 <= held_out_region_index < n):
+        raise IndexError("held_out_region_index out of range")
+    upper = np.triu(np.ones((n, n), dtype=bool), k=1)
+    ii, jj = np.indices((n, n))
+    touches = (ii == held_out_region_index) | (jj == held_out_region_index)
+    held = upper & touches
+    fit = upper & ~touches
+    return fit, held
+
+
+def evaluate_leave_one_region_out(
+    family: StructuralFibreFamily,
+    observed: np.ndarray,
+    *,
+    correlation_threshold: float = 0.98,
+) -> RegionBlockedResult:
+    """Evaluate externalization to each completely unseen neuropil in turn."""
+    n = len(family.regions)
+    obs = np.asarray(observed, dtype=float)
+    if obs.shape != (n, n):
+        raise ValueError("observed must align with family regions")
+    folds: list[RegionHoldoutFoldResult] = []
+    for region_i, region in enumerate(family.regions):
+        fit, held = leave_one_region_out_masks(n, region_i)
+        result = fit_ndim_fibre_consumer(
+            family,
+            obs,
+            fit,
+            held,
+            correlation_threshold=correlation_threshold,
+        )
+        folds.append(
+            RegionHoldoutFoldResult(
+                held_out_region=region,
+                train_pair_count=result.fit_pair_count,
+                held_out_pair_count=result.held_out_pair_count,
+                mean_residual=result.mean_residual,
+                selected_fibres=result.selected_fibres,
+                coefficients=result.coefficients,
+            )
+        )
+    return RegionBlockedResult(tuple(folds))
+
+
+def _permute_symmetric_observation(observed: np.ndarray, permutation: np.ndarray) -> np.ndarray:
+    obs = np.asarray(observed, dtype=float)
+    return obs[np.ix_(permutation, permutation)]
+
+
+def region_label_permutation_null_pair_holdout(
+    family: StructuralFibreFamily,
+    observed: np.ndarray,
+    fit_mask: np.ndarray,
+    held_out_mask: np.ndarray,
+    *,
+    n_null: int = 100,
+    seed: int = 0,
+    correlation_threshold: float = 0.98,
+) -> PermutationNullResult:
+    """Permutation null that refits the NDim consumer for every region relabeling."""
+    if n_null < 1:
+        raise ValueError("n_null must be >= 1")
+    observed_result = fit_ndim_fibre_consumer(
+        family,
+        observed,
+        fit_mask,
+        held_out_mask,
+        correlation_threshold=correlation_threshold,
+    )
+    rng = np.random.default_rng(seed)
+    n = len(family.regions)
+    nulls = np.empty(n_null, dtype=float)
+    for k in range(n_null):
+        permuted = _permute_symmetric_observation(observed, rng.permutation(n))
+        nulls[k] = fit_ndim_fibre_consumer(
+            family,
+            permuted,
+            fit_mask,
+            held_out_mask,
+            correlation_threshold=correlation_threshold,
+        ).mean_residual
+    p = float((1 + np.count_nonzero(nulls <= observed_result.mean_residual)) / (n_null + 1))
+    return PermutationNullResult(observed_result.mean_residual, nulls, p)
+
+
+def region_label_permutation_null_leave_one_region_out(
+    family: StructuralFibreFamily,
+    observed: np.ndarray,
+    *,
+    n_null: int = 100,
+    seed: int = 0,
+    correlation_threshold: float = 0.98,
+) -> PermutationNullResult:
+    """Region-label null for unseen-region generalization, refitting every fold/null."""
+    if n_null < 1:
+        raise ValueError("n_null must be >= 1")
+    observed_result = evaluate_leave_one_region_out(
+        family, observed, correlation_threshold=correlation_threshold
+    )
+    rng = np.random.default_rng(seed)
+    n = len(family.regions)
+    nulls = np.empty(n_null, dtype=float)
+    for k in range(n_null):
+        permuted = _permute_symmetric_observation(observed, rng.permutation(n))
+        nulls[k] = evaluate_leave_one_region_out(
+            family,
+            permuted,
+            correlation_threshold=correlation_threshold,
+        ).weighted_mean_residual
+    p = float((1 + np.count_nonzero(nulls <= observed_result.weighted_mean_residual)) / (n_null + 1))
+    return PermutationNullResult(observed_result.weighted_mean_residual, nulls, p)
