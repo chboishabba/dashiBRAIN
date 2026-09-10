@@ -61,7 +61,9 @@ def load_functional_traces(path: str | Path) -> FunctionalTraceTable:
     if not cols:
         raise ValueError("functional table is empty")
 
-    time_col = _first_present(cols, ("time", "t", "timestamp", "seconds", "frame_time"))
+    # ``time_index`` is emitted by the real Gauthey JRC2018 compiler.  Treating
+    # it as a functional unit would manufacture an extra fourteenth region.
+    time_col = _first_present(cols, ("time", "t", "timestamp", "seconds", "frame_time", "time_index", "frame_index"))
     unit_col = _first_present(cols, ("unit_id", "roi_id", "region", "neuropil", "cell_id"))
     value_col = _first_present(cols, ("dff", "df_f", "delta_f_over_f", "value", "activity"))
 
