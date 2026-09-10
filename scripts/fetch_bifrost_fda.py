@@ -7,10 +7,10 @@ Bella E. Brezovec, Andrew B. Berger, Yukun A. Hao et al.,
 PNAS 121(47):e2322687121 (2024), DOI 10.1073/pnas.2322687121.
 Dataset DOI 10.5061/dryad.8pk0p2nx1.
 
-This script resolves the current public Dryad version and file ID dynamically,
-then range-downloads only ``nifti1_compliant_FDA.nii`` with retry/resume. It does
-not download the 40+ GB BIFROST dataset bundle or hard-code a transient Dryad
-file-stream URL.
+This script resolves the current public Dryad version and download resource
+dynamically, then range-downloads only ``nifti1_compliant_FDA.nii`` with
+retry/resume. It does not download the full BIFROST dataset bundle or rely on a
+top-level file ``id`` field, which Dryad's v2 file representation may omit.
 """
 
 from __future__ import annotations
@@ -73,6 +73,31 @@ def resolve_public_file(doi: str, filename: str) -> dict:
     return matches[0]
 
 
+def _file_resource(file_meta: dict) -> tuple[int | None, str]:
+    """Return optional numeric file id and canonical Dryad download URL."""
+    links = file_meta.get("_links") or {}
+    download = links.get("stash:download") or links.get("download")
+    if isinstance(download, dict) and download.get("href"):
+        download_url = _absolute_api_href(str(download["href"]))
+    else:
+        download_url = ""
+
+    raw_id = file_meta.get("id")
+    if raw_id is None:
+        self_link = links.get("self")
+        if isinstance(self_link, dict) and self_link.get("href"):
+            tail = str(self_link["href"]).rstrip("/").rsplit("/", 1)[-1]
+            if tail.isdigit():
+                raw_id = int(tail)
+    file_id = int(raw_id) if raw_id is not None else None
+
+    if not download_url and file_id is not None:
+        download_url = f"{DRYAD_API}/files/{file_id}/download"
+    if not download_url:
+        raise RuntimeError("Dryad file metadata lacks a usable download resource")
+    return file_id, download_url
+
+
 def _hash_existing_prefix(path: Path) -> tuple[int, object]:
     hasher = sha256()
     size = 0
@@ -89,15 +114,12 @@ def _hash_existing_prefix(path: Path) -> tuple[int, object]:
 
 def download_public_file(file_meta: dict, output_path: Path, *, chunk_bytes: int = 8 << 20) -> dict:
     """Resume a public Dryad file by exact byte range and verify before promotion."""
-    file_id = file_meta.get("id")
-    if file_id is None:
-        raise RuntimeError("Dryad file metadata lacks file id")
+    file_id, download_url = _file_resource(file_meta)
     expected_size = int(file_meta.get("size") or 0)
     if expected_size <= 0:
         raise RuntimeError("Dryad file metadata lacks a positive size")
     digest = str(file_meta.get("digest") or "").lower()
     digest_type = str(file_meta.get("digestType") or "").lower()
-    download_url = f"{DRYAD_API}/files/{file_id}/download"
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = output_path.with_name(output_path.name + ".part")
@@ -127,12 +149,12 @@ def download_public_file(file_meta: dict, output_path: Path, *, chunk_bytes: int
             f"downloaded {tmp.stat().st_size} bytes; Dryad metadata says {expected_size}"
         )
     actual_sha256 = hasher.hexdigest().lower()
-    # Dryad commonly exposes MD5, but if a SHA-256 is supplied we can verify it directly.
     if digest and digest_type in {"sha-256", "sha256"} and actual_sha256 != digest:
         raise RuntimeError("download SHA-256 does not match Dryad metadata")
     tmp.replace(output_path)
     return {
-        "dryad_file_id": int(file_id),
+        "dryad_file_id": file_id,
+        "dryad_download_url": download_url,
         "path": str(output_path),
         "size": expected_size,
         "sha256": actual_sha256,
@@ -154,10 +176,12 @@ def main() -> None:
         raise SystemExit("--chunk-mib must be positive")
 
     meta = resolve_public_file(args.doi, args.filename)
+    file_id, download_url = _file_resource(meta)
     summary = {
         "dataset_doi": args.doi,
         "filename": args.filename,
-        "dryad_file_id": meta.get("id"),
+        "dryad_file_id": file_id,
+        "dryad_download_url": download_url,
         "size": meta.get("size"),
         "digest": meta.get("digest"),
         "digest_type": meta.get("digestType"),
