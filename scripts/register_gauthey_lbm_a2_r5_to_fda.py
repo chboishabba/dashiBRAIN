@@ -26,7 +26,9 @@ import numpy as np
 
 from dashi.analysis.gauthey_lbm_fda_registration import (
     aggregate_transformed_selected_labels_to_regions,
+    centered_lbm_affine_in_fda_axes,
     load_atlas_region_names,
+    physical_extent_microns,
     reorder_native_labels_to_nifti_shape,
 )
 
@@ -82,22 +84,29 @@ def main() -> None:
     transformed_label_nifti = output / "selected_labels_fda.nii"
 
     mean_img = nib.load(args.mean_brain)
+    fda_img = nib.load(args.fda_template)
     if len(mean_img.shape) != 3:
         raise SystemExit(f"mean brain must be 3-D, got {mean_img.shape}")
+    if len(fda_img.shape) != 3:
+        raise SystemExit(f"FDA template must be 3-D, got {fda_img.shape}")
 
-    # Gauthey LBM ground truth: 1.3 um in-plane, 9.0 um axial.
-    # Set xyzt_units to micron and zooms to (1.3, 1.3, 9.0) so ITK/ANTs interprets
-    # the physical millimeter dimensions consistently with the BIFROST FDA template.
+    # Gauthey's deposited mean-brain array is (y,x,z)=(226,512,27), while FDA's
+    # world axes are (x,y,z).  Calibrate the published 1.3 x 1.3 x 9.0 um voxel
+    # sizes, swap moving x/y into FDA world axes, and centre the physical volumes
+    # before BIFROST estimates affine/non-linear terms.  Merely changing zooms on
+    # the deposited diagonal affine yields ~294 x 666 um in FDA x/y and caused a
+    # corner-only 374 -> 77 label survival artifact.
     calibrated_mean_nifti = output / "mean_brain_calibrated.nii"
     mean_header = mean_img.header.copy()
     mean_header.set_xyzt_units("micron", "unknown")
     mean_header.set_zooms((1.3, 1.3, 9.0))
-    calibrated_affine = np.array([
-        [-1.3,  0.0,  0.0,  0.0],
-        [ 0.0, -1.3,  0.0,  0.0],
-        [ 0.0,  0.0,  9.0,  0.0],
-        [ 0.0,  0.0,  0.0,  1.0],
-    ], dtype=np.float64)
+    calibrated_affine = centered_lbm_affine_in_fda_axes(
+        mean_img.shape,
+        fda_img.shape,
+        np.asarray(fda_img.affine),
+        inplane_microns=1.3,
+        axial_microns=9.0,
+    )
     nib.save(
         nib.Nifti1Image(mean_img.get_fdata(dtype=np.float32), calibrated_affine, mean_header),
         calibrated_mean_nifti,
@@ -114,10 +123,23 @@ def main() -> None:
         native_label_nifti,
     )
 
+    moving_extent = physical_extent_microns(mean_img.shape, calibrated_affine)
+    fixed_extent = physical_extent_microns(fda_img.shape, np.asarray(fda_img.affine))
+    # Because FDA NIfTI units are micron, nibabel reports its affine in microns.
+    # Moving voxel-axis 0 is anatomical Y and axis 1 is X; compare anatomical
+    # extents after that permutation rather than raw array-axis order.
+    moving_anatomical_extent = (moving_extent[1], moving_extent[0], moving_extent[2])
+    fixed_anatomical_extent = fixed_extent
+    print(
+        "staged physical extents (um): "
+        f"moving xyz={moving_anatomical_extent}, fixed xyz={fixed_anatomical_extent}",
+        flush=True,
+    )
+
     if not args.skip_registration:
         bifrost_downsample = args.downsample_to
         if bifrost_downsample >= 0.1:
-            # Convert microns to millimeters for ITK/ANTs internal spacing
+            # Convert microns to millimeters for ITK/ANTs internal spacing.
             bifrost_downsample /= 1000.0
 
         register_cmd = [
@@ -178,6 +200,10 @@ def main() -> None:
         "mean_brain": str(Path(args.mean_brain)),
         "fda_template": str(Path(args.fda_template)),
         "native_to_nifti_axis_permutation": list(permutation),
+        "staging_geometry": "moving array (y,x,z) mapped to FDA world (x,y,z) and physical centres aligned before BIFROST",
+        "moving_anatomical_extent_microns_xyz": list(moving_anatomical_extent),
+        "fixed_extent_microns_xyz": list(fixed_anatomical_extent),
+        "calibrated_moving_affine": np.asarray(calibrated_affine).tolist(),
         "selected_roi_count": int(selected_rows.size),
         "selected_labels_surviving_fda_transform": len(surviving_labels),
         "selected_labels_lost_fda_transform": int(selected_rows.size - len(surviving_labels)),
@@ -222,37 +248,34 @@ def main() -> None:
                     "overlap_fraction",
                 ]
             )
-            for item in compiled.assignments:
+            for assignment in compiled.assignments:
                 writer.writerow(
                     [
-                        item.selected_row,
-                        item.atlas_region_id,
-                        item.atlas_region,
-                        item.voxel_count,
-                        item.overlap_voxel_count,
-                        f"{item.overlap_fraction:.17g}",
+                        assignment.selected_row,
+                        assignment.atlas_region_id,
+                        assignment.atlas_region,
+                        assignment.voxel_count,
+                        assignment.overlap_voxel_count,
+                        f"{assignment.overlap_fraction:.17g}",
                     ]
                 )
 
-        region_trace_path = output / "region_functional.csv"
-        with region_trace_path.open("w", newline="", encoding="utf-8") as handle:
+        region_csv = output / "region_functional.csv"
+        with region_csv.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
-            writer.writerow(["time_index", *compiled.region_traces.unit_ids])
-            for i, values in enumerate(compiled.region_traces.traces):
-                writer.writerow([i, *[f"{float(v):.17g}" for v in values]])
+            writer.writerow(compiled.region_traces.unit_ids)
+            writer.writerows(compiled.region_traces.traces)
 
         summary.update(
             {
-                "fda_atlas_labels": str(Path(args.fda_atlas_labels)),
                 "atlas_aggregation_executed": True,
-                "assigned_selected_roi_count": int(compiled.assigned_selected_count),
-                "unassigned_selected_roi_count": int(compiled.unassigned_selected_count),
-                "region_count": len(compiled.region_traces.unit_ids),
-                "timepoints": int(compiled.region_traces.traces.shape[0]),
-                "minimum_overlap_fraction": float(compiled.minimum_overlap_fraction),
-                "region_assignments": str(assignments_path),
-                "region_functional": str(region_trace_path),
-                "identity_semantics": "FDA neuropil overlap of exact recovered selected supervoxels; not neuron identity",
+                "atlas_region_count": len(compiled.region_traces.unit_ids),
+                "atlas_regions": list(compiled.region_traces.unit_ids),
+                "atlas_assigned_selected_count": compiled.assigned_selected_count,
+                "atlas_unassigned_selected_count": compiled.unassigned_selected_count,
+                "atlas_minimum_overlap_fraction": compiled.minimum_overlap_fraction,
+                "atlas_assignments": str(assignments_path),
+                "region_functional": str(region_csv),
             }
         )
 
