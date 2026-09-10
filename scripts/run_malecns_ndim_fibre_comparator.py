@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """Run the NDim/fibre-aware MaleCNS structure-function comparator.
 
-This is a bounded follow-up to the first real region-level benchmark.  It does
-not replace the historical fixed-weight DASHI result.  It exposes distinct
+This is a bounded follow-up to the first real region-level benchmark. It does
+not replace the historical fixed-weight DASHI result. It exposes distinct
 structural fibres, selects a structurally compatible subset using training
 feature geometry only, fits that subset on training pairs only, freezes it, and
-then evaluates the untouched held-out pairs.
+then evaluates untouched held-out pairs.
+
+The script also reports a stricter leave-one-region-out result, where every pair
+containing the held-out neuropil is excluded from fitting, plus region-label
+permutation nulls that refit the complete NDim consumer inside every null draw.
 """
 
 from __future__ import annotations
@@ -18,7 +22,10 @@ import numpy as np
 
 from dashi.analysis.ndim_structure_function import (
     build_ndim_structural_fibres,
+    evaluate_leave_one_region_out,
     fit_ndim_fibre_consumer,
+    region_label_permutation_null_leave_one_region_out,
+    region_label_permutation_null_pair_holdout,
 )
 from dashi.analysis.structure_function_real import (
     RegionStructuralFeatures,
@@ -42,6 +49,7 @@ def main() -> None:
     p.add_argument("--region-functional-source", required=True)
     p.add_argument("--synapse-partners", required=True)
     p.add_argument("--correlation-threshold", type=float, default=0.98)
+    p.add_argument("--null-count", type=int, default=100)
     p.add_argument("--output", required=True)
     args = p.parse_args()
 
@@ -104,6 +112,27 @@ def main() -> None:
         held,
         correlation_threshold=args.correlation_threshold,
     )
+    blocked = evaluate_leave_one_region_out(
+        family,
+        functional.matrix,
+        correlation_threshold=args.correlation_threshold,
+    )
+    pair_null = region_label_permutation_null_pair_holdout(
+        family,
+        functional.matrix,
+        fit,
+        held,
+        n_null=args.null_count,
+        seed=20260911,
+        correlation_threshold=args.correlation_threshold,
+    )
+    blocked_null = region_label_permutation_null_leave_one_region_out(
+        family,
+        functional.matrix,
+        n_null=args.null_count,
+        seed=20260912,
+        correlation_threshold=args.correlation_threshold,
+    )
 
     payload = {
         "status": "real_region_level_ndim_fibre_comparator",
@@ -126,7 +155,7 @@ def main() -> None:
             "mean_path_aware_residual": fixed.mean_path,
             "mean_fixed_dashi_residual": fixed.mean_dashi,
         },
-        "ndim_fibre_model": {
+        "ndim_pair_holdout": {
             "candidate_fibres": list(family.fibres),
             "selected_fibres": list(ndim.selected_fibres),
             "rejected_constant": list(ndim.compatibility.rejected_constant),
@@ -140,12 +169,36 @@ def main() -> None:
             "beats_direct": ndim.mean_residual < fixed.mean_direct,
             "beats_path": ndim.mean_residual < fixed.mean_path,
             "beats_fixed_dashi": ndim.mean_residual < fixed.mean_dashi,
+            "region_label_permutation_null_p": pair_null.empirical_p_value,
+            "null_mean_residual": float(np.mean(pair_null.null_residuals)),
+            "null_min_residual": float(np.min(pair_null.null_residuals)),
+        },
+        "ndim_leave_one_region_out": {
+            "mean_fold_residual": blocked.mean_fold_residual,
+            "weighted_mean_residual": blocked.weighted_mean_residual,
+            "region_label_permutation_null_p": blocked_null.empirical_p_value,
+            "null_mean_residual": float(np.mean(blocked_null.null_residuals)),
+            "null_min_residual": float(np.min(blocked_null.null_residuals)),
+            "folds": [
+                {
+                    "held_out_region": f.held_out_region,
+                    "train_pair_count": f.train_pair_count,
+                    "held_out_pair_count": f.held_out_pair_count,
+                    "mean_residual": f.mean_residual,
+                    "selected_fibres": list(f.selected_fibres),
+                    "coefficients_intercept_then_selected": f.coefficients.tolist(),
+                }
+                for f in blocked.folds
+            ],
         },
         "firewalls": {
             "compatibility_selection_uses_functional_outcomes": False,
-            "fit_uses_held_out_outcomes": False,
+            "pair_fit_uses_held_out_outcomes": False,
+            "leave_one_region_out_fit_contains_held_region_pairs": False,
+            "permutation_null_reuses_frozen_observed_coefficients": False,
             "shared_region_identity_is_neuron_identity": False,
             "more_fibres_implies_better_prediction": False,
+            "pair_holdout_is_equivalent_to_region_holdout": False,
         },
     }
 
