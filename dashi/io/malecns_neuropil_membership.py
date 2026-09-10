@@ -1,9 +1,9 @@
 """Synapse-derived MaleCNS neuron-to-neuropil membership.
 
 MaleCNS ``somaNeuromere`` is a soma/segment annotation and is not a central-
-brain neuropil carrier.  The official v1.0 synaptic partner table instead
+brain neuropil carrier. The official v1.0 synaptic partner table instead
 contains ``body_pre``, ``body_post`` and ``primary_post`` for each synaptic
-partner pair.  This module uses those released synapse locations to derive a
+partner pair. This module uses those released synapse locations to derive a
 fractional neuron->neuropil membership without forcing each neuron into one
 region.
 
@@ -30,11 +30,7 @@ _BILATERAL_SUFFIX = re.compile(r"\((?:L|R|M)\)$")
 
 
 def canonicalize_malecns_neuropil(label: object) -> str:
-    """Collapse MaleCNS laterality suffixes onto atlas-level neuropil names.
-
-    Examples: ``AL(L) -> AL``, ``WED(R) -> WED``.  Unspecified/background
-    labels remain explicit rather than being silently mapped to a named ROI.
-    """
+    """Collapse MaleCNS laterality suffixes onto atlas-level neuropil names."""
     if label is None:
         return ""
     text = str(label).strip()
@@ -47,7 +43,7 @@ def canonicalize_malecns_neuropil(label: object) -> str:
 class NeuropilMembership:
     regions: tuple[str, ...]
     membership: sp.csr_matrix  # region x neuron; columns sum to 1 when observed
-    observed_synapse_incidence: np.ndarray  # per-neuron incidence used for normalization
+    observed_synapse_incidence: np.ndarray
     source_rows: int
 
     @property
@@ -59,20 +55,17 @@ def _resolve(names: Sequence[str], candidates: Sequence[str]) -> str:
     for name in candidates:
         if name in names:
             return name
-    raise KeyError(f"missing required MaleCNS synapse column; tried {tuple(candidates)!r}; available={tuple(names)!r}")
+    raise KeyError(
+        f"missing required MaleCNS synapse column; tried {tuple(candidates)!r}; "
+        f"available={tuple(names)!r}"
+    )
 
 
 def _iter_feather_batches(path: Path, columns: Sequence[str]):
-    """Yield selected Arrow columns one record batch at a time.
-
-    Opening the IPC file with a memory map avoids materializing the 6.8 GB
-    partner table as Python objects and keeps residency tied to batch size plus
-    the final sparse membership accumulator.
-    """
     try:
         import pyarrow as pa
         import pyarrow.ipc as ipc
-    except ImportError as exc:  # pragma: no cover - environment dependency
+    except ImportError as exc:  # pragma: no cover
         raise ImportError("pyarrow is required for MaleCNS synapse partner ingestion") from exc
 
     source = pa.memory_map(str(path), "r")
@@ -87,22 +80,42 @@ def _iter_feather_batches(path: Path, columns: Sequence[str]):
         source.close()
 
 
+def _graph_integer_ids(node_ids: Sequence[str]) -> np.ndarray:
+    try:
+        ids = np.asarray([int(x) for x in node_ids], dtype=np.int64)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("MaleCNS synapse membership requires integer body IDs") from exc
+    if ids.size and np.any(ids[1:] < ids[:-1]):
+        raise ValueError("MaleCNS graph body IDs must be sorted for vectorized lookup")
+    return ids
+
+
+def _located_indices(sorted_ids: np.ndarray, bodies: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Return graph indices and mask for body IDs present in the graph."""
+    bodies = np.asarray(bodies, dtype=np.int64)
+    pos = np.searchsorted(sorted_ids, bodies)
+    valid = pos < sorted_ids.size
+    safe = np.minimum(pos, max(sorted_ids.size - 1, 0))
+    if sorted_ids.size:
+        valid &= sorted_ids[safe] == bodies
+    else:
+        valid[:] = False
+    return pos, valid
+
+
 def load_synapse_neuropil_membership(
     path: str | Path,
     node_ids: Sequence[str],
     *,
-    allowed_regions: Iterable[str] | None = None,
+    allowed_regions: Iterable[str],
 ) -> NeuropilMembership:
-    """Build a fractional region x neuron membership from real synapse rows.
+    """Build bounded fractional region x neuron membership from real synapses.
 
-    Each partner row contributes one incidence to both participating neurons in
-    the row's ``primary_post`` neuropil.  A neuron's incidences are normalized
-    across retained neuropils, so a neuron spanning multiple neuropils remains
-    fractionally represented instead of receiving a fabricated single label.
-
-    ``allowed_regions`` is normally the functional atlas vocabulary.  Applying
-    it during ingestion is both semantically appropriate and substantially
-    lowers memory for this large table.
+    Only the requested functional-region vocabulary is accumulated. Each
+    retained partner row contributes one incidence to both participating
+    neurons in the row's ``primary_post`` neuropil. Counts are accumulated
+    batchwise into a bounded ``regions x neurons`` matrix and normalized per
+    neuron afterwards. No individual synapse row survives the batch boundary.
     """
     p = Path(path)
     if not p.is_file():
@@ -110,6 +123,7 @@ def load_synapse_neuropil_membership(
 
     try:
         import pyarrow as pa
+        import pyarrow.compute as pc
         import pyarrow.ipc as ipc
     except ImportError as exc:  # pragma: no cover
         raise ImportError("pyarrow is required for MaleCNS synapse partner ingestion") from exc
@@ -122,53 +136,60 @@ def load_synapse_neuropil_membership(
     roi_col = _resolve(names, ("primary_post", "primary_roi", "neuropil", "roi"))
     source.close()
 
-    node_lookup = {str(node_id): i for i, node_id in enumerate(node_ids)}
-    allowed = None if allowed_regions is None else {str(r) for r in allowed_regions}
+    graph_ids = _graph_integer_ids(node_ids)
+    requested = tuple(sorted({str(r).strip() for r in allowed_regions if str(r).strip()}))
+    if not requested:
+        raise ValueError("allowed_regions must contain at least one declared functional region")
+    requested_array = pa.array(requested)
 
-    # Sparse dictionary over only observed (region, neuron) pairs.  The number
-    # of such pairs is bounded by biological neuropil occupancy, not synapse-row
-    # count, which is the key residency improvement over retaining all rows.
-    counts: dict[tuple[str, int], int] = {}
-    incidence = np.zeros(len(node_ids), dtype=np.float64)
+    n_regions = len(requested)
+    n_nodes = len(node_ids)
+    counts = np.zeros((n_regions, n_nodes), dtype=np.int64)
     source_rows = 0
 
     for pre_arr, post_arr, roi_arr in _iter_feather_batches(p, (pre_col, post_col, roi_col)):
-        pres = pre_arr.to_numpy(zero_copy_only=False)
-        posts = post_arr.to_numpy(zero_copy_only=False)
-        rois = roi_arr.to_pylist()
-        source_rows += len(rois)
-        for pre, post, raw_roi in zip(pres, posts, rois):
-            roi = canonicalize_malecns_neuropil(raw_roi)
-            if not roi or (allowed is not None and roi not in allowed):
-                continue
-            for body in (pre, post):
-                node_i = node_lookup.get(str(body))
-                if node_i is None:
-                    continue
-                key = (roi, node_i)
-                counts[key] = counts.get(key, 0) + 1
-                incidence[node_i] += 1.0
+        source_rows += len(roi_arr)
 
-    regions = tuple(sorted({roi for roi, _ in counts}))
-    if not regions:
-        raise ValueError("no synapse-derived MaleCNS neuropils overlap the requested vocabulary")
-    region_index = {r: i for i, r in enumerate(regions)}
-
-    rows: list[int] = []
-    cols: list[int] = []
-    vals: list[float] = []
-    for (roi, node_i), count in counts.items():
-        denom = incidence[node_i]
-        if denom <= 0:
+        # MaleCNS/neuPrint names bilateral ROIs like AL(L), AMMC(R), etc. The
+        # functional carrier is bilateral at the present resolution, so only
+        # this explicit laterality suffix is collapsed.
+        roi_base = pc.replace_substring_regex(
+            pc.cast(roi_arr, pa.string()),
+            pattern=r"\((?:L|R|M)\)$",
+            replacement="",
+        )
+        roi_index = pc.index_in(roi_base, value_set=requested_array).to_numpy(
+            zero_copy_only=False
+        )
+        keep = roi_index >= 0
+        if not np.any(keep):
             continue
-        rows.append(region_index[roi])
-        cols.append(node_i)
-        vals.append(float(count) / float(denom))
 
-    membership = sp.coo_matrix(
-        (vals, (rows, cols)),
-        shape=(len(regions), len(node_ids)),
-        dtype=np.float32,
-    ).tocsr()
-    membership.sum_duplicates()
+        region_i = roi_index[keep].astype(np.int64, copy=False)
+        pres = pre_arr.to_numpy(zero_copy_only=False)[keep]
+        posts = post_arr.to_numpy(zero_copy_only=False)[keep]
+
+        pre_i, pre_valid = _located_indices(graph_ids, pres)
+        post_i, post_valid = _located_indices(graph_ids, posts)
+
+        if np.any(pre_valid):
+            np.add.at(counts, (region_i[pre_valid], pre_i[pre_valid]), 1)
+        if np.any(post_valid):
+            np.add.at(counts, (region_i[post_valid], post_i[post_valid]), 1)
+
+    region_mass = counts.sum(axis=1)
+    keep_regions = region_mass > 0
+    if not np.any(keep_regions):
+        raise ValueError("no synapse-derived MaleCNS neuropils overlap the requested vocabulary")
+
+    counts = counts[keep_regions]
+    regions = tuple(r for r, keep in zip(requested, keep_regions) if keep)
+    incidence = counts.sum(axis=0).astype(np.float64, copy=False)
+
+    membership_dense = counts.astype(np.float32)
+    observed = incidence > 0
+    membership_dense[:, observed] /= incidence[observed]
+    membership = sp.csr_matrix(membership_dense)
+    membership.eliminate_zeros()
+
     return NeuropilMembership(regions, membership, incidence, source_rows)
