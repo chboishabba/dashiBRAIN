@@ -8,8 +8,9 @@ PNAS 121(47):e2322687121 (2024), DOI 10.1073/pnas.2322687121.
 Dataset DOI 10.5061/dryad.8pk0p2nx1.
 
 This script resolves the current public Dryad version and file ID dynamically,
-then streams only ``nifti1_compliant_FDA.nii``. It does not download the 40+ GB
-BIFROST dataset bundle or hard-code a transient Dryad file-stream URL.
+then range-downloads only ``nifti1_compliant_FDA.nii`` with retry/resume. It does
+not download the 40+ GB BIFROST dataset bundle or hard-code a transient Dryad
+file-stream URL.
 """
 
 from __future__ import annotations
@@ -20,6 +21,8 @@ import json
 from pathlib import Path
 import urllib.parse
 import urllib.request
+
+from dashi.io.remote_zip import _request
 
 
 DRYAD_API = "https://datadryad.org/api/v2"
@@ -70,44 +73,72 @@ def resolve_public_file(doi: str, filename: str) -> dict:
     return matches[0]
 
 
+def _hash_existing_prefix(path: Path) -> tuple[int, object]:
+    hasher = sha256()
+    size = 0
+    if path.exists():
+        with path.open("rb") as handle:
+            while True:
+                chunk = handle.read(8 << 20)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+                size += len(chunk)
+    return size, hasher
+
+
 def download_public_file(file_meta: dict, output_path: Path, *, chunk_bytes: int = 8 << 20) -> dict:
+    """Resume a public Dryad file by exact byte range and verify before promotion."""
     file_id = file_meta.get("id")
     if file_id is None:
         raise RuntimeError("Dryad file metadata lacks file id")
     expected_size = int(file_meta.get("size") or 0)
+    if expected_size <= 0:
+        raise RuntimeError("Dryad file metadata lacks a positive size")
     digest = str(file_meta.get("digest") or "").lower()
     digest_type = str(file_meta.get("digestType") or "").lower()
     download_url = f"{DRYAD_API}/files/{file_id}/download"
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = output_path.with_name(output_path.name + ".part")
-    req = urllib.request.Request(
-        download_url,
-        headers={"Accept": "application/octet-stream", "User-Agent": "dashiBRAIN-BIFROST/1.0"},
-    )
-    hasher = sha256()
-    written = 0
-    with urllib.request.urlopen(req, timeout=120) as response, tmp.open("wb") as handle:
-        while True:
-            chunk = response.read(chunk_bytes)
-            if not chunk:
-                break
-            handle.write(chunk)
-            hasher.update(chunk)
-            written += len(chunk)
+    written, hasher = _hash_existing_prefix(tmp)
+    if written > expected_size:
+        raise RuntimeError(
+            f"partial FDA download is larger than Dryad metadata: {written} > {expected_size}"
+        )
 
-    if expected_size and written != expected_size:
-        raise RuntimeError(f"downloaded {written} bytes; Dryad metadata says {expected_size}")
-    if digest and digest_type == "sha-256" and hasher.hexdigest().lower() != digest:
+    with tmp.open("ab") as handle:
+        cursor = written
+        while cursor < expected_size:
+            end = min(expected_size - 1, cursor + chunk_bytes - 1)
+            chunk, _headers = _request(download_url, cursor, end)
+            expected = end - cursor + 1
+            if len(chunk) != expected:
+                raise RuntimeError(
+                    f"short Dryad range read at byte {cursor}: got {len(chunk)}, expected {expected}"
+                )
+            handle.write(chunk)
+            handle.flush()
+            hasher.update(chunk)
+            cursor += len(chunk)
+
+    if tmp.stat().st_size != expected_size:
+        raise RuntimeError(
+            f"downloaded {tmp.stat().st_size} bytes; Dryad metadata says {expected_size}"
+        )
+    actual_sha256 = hasher.hexdigest().lower()
+    # Dryad commonly exposes MD5, but if a SHA-256 is supplied we can verify it directly.
+    if digest and digest_type in {"sha-256", "sha256"} and actual_sha256 != digest:
         raise RuntimeError("download SHA-256 does not match Dryad metadata")
     tmp.replace(output_path)
     return {
         "dryad_file_id": int(file_id),
         "path": str(output_path),
-        "size": written,
-        "sha256": hasher.hexdigest(),
+        "size": expected_size,
+        "sha256": actual_sha256,
         "dryad_digest": digest or None,
         "dryad_digest_type": digest_type or None,
+        "resume_sidecar": str(tmp),
     }
 
 
@@ -117,7 +148,10 @@ def main() -> None:
     parser.add_argument("--doi", default=BIFROST_DATASET_DOI)
     parser.add_argument("--filename", default=FDA_FILENAME)
     parser.add_argument("--metadata-only", action="store_true")
+    parser.add_argument("--chunk-mib", type=int, default=8)
     args = parser.parse_args()
+    if args.chunk_mib <= 0:
+        raise SystemExit("--chunk-mib must be positive")
 
     meta = resolve_public_file(args.doi, args.filename)
     summary = {
@@ -129,7 +163,9 @@ def main() -> None:
         "digest_type": meta.get("digestType"),
     }
     if not args.metadata_only:
-        summary.update(download_public_file(meta, Path(args.output)))
+        summary.update(
+            download_public_file(meta, Path(args.output), chunk_bytes=args.chunk_mib << 20)
+        )
     print(json.dumps(summary, indent=2))
 
 
