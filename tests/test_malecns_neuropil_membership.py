@@ -19,7 +19,7 @@ def test_canonicalize_malecns_neuropil_collapses_laterality_only():
     assert canonicalize_malecns_neuropil("CentralBrain-unspecified") == "CentralBrain-unspecified"
 
 
-def test_synapse_membership_is_fractional_and_vocab_restricted(tmp_path):
+def test_synapse_membership_uses_total_incidence_denominator(tmp_path):
     path = tmp_path / "partners.feather"
     feather.write_feather(
         pa.table(
@@ -42,13 +42,16 @@ def test_synapse_membership_is_fractional_and_vocab_restricted(tmp_path):
     assert out.observed_neuron_count == 3
 
     dense = out.membership.toarray()
-    # Body 1 participates once in AL and once in AMMC after GNG is excluded.
-    assert np.allclose(dense[:, 0], [0.5, 0.5])
-    # Body 2 participates in two retained AL contacts only.
+    # Bodies 1 and 3 each have one additional GNG incidence outside the
+    # functional vocabulary, so their retained membership mass is only 2/3.
+    assert np.allclose(dense[:, 0], [1.0 / 3.0, 1.0 / 3.0])
     assert np.allclose(dense[:, 1], [1.0, 0.0])
-    # Body 3 participates once in AMMC and once in AL.
-    assert np.allclose(dense[:, 2], [0.5, 0.5])
-    assert np.allclose(np.asarray(out.membership.sum(axis=0)).ravel(), 1.0)
+    assert np.allclose(dense[:, 2], [1.0 / 3.0, 1.0 / 3.0])
+    assert np.allclose(out.observed_synapse_incidence, [3.0, 2.0, 3.0])
+    assert np.allclose(
+        np.asarray(out.membership.sum(axis=0)).ravel(),
+        [2.0 / 3.0, 1.0, 2.0 / 3.0],
+    )
 
 
 def test_fractional_membership_drives_region_structural_carrier():
