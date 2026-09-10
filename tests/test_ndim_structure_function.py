@@ -1,5 +1,9 @@
 import numpy as np
 
+from dashi.analysis.ndim_stability_nulls import (
+    strength_preserving_structural_null_loro,
+    summarize_loro_fibre_stability,
+)
 from dashi.analysis.ndim_structure_function import (
     build_ndim_structural_fibres,
     evaluate_leave_one_region_out,
@@ -150,3 +154,31 @@ def test_region_label_permutation_nulls_refit_and_return_valid_p_values():
     assert 0.0 < blocked_null.empirical_p_value <= 1.0
     assert np.isfinite(pair_null.observed_residual)
     assert np.isfinite(blocked_null.observed_residual)
+
+
+def test_loro_stability_summary_tracks_fold_selection_and_coefficients():
+    family = build_ndim_structural_fibres(_structural())
+    blocked = evaluate_leave_one_region_out(family, _observed(), correlation_threshold=1.0)
+    stability = summarize_loro_fibre_stability(blocked)
+    assert stability.fold_count == 4
+    assert len(stability.fibres) >= 1
+    assert all(0.0 < f.selected_fold_fraction <= 1.0 for f in stability.fibres)
+    assert np.isfinite(stability.intercept_mean)
+    assert np.isfinite(stability.intercept_std)
+
+
+def test_strength_preserving_structural_null_refits_loro_and_preserves_marginals():
+    structural = _structural()
+    result = strength_preserving_structural_null_loro(
+        structural,
+        _observed(),
+        n_null=4,
+        seed=19,
+        correlation_threshold=1.0,
+    )
+    assert result.null_residuals.shape == (4,)
+    assert 0.0 < result.empirical_p_value <= 1.0
+    assert np.isfinite(result.observed_residual)
+    assert np.all(np.isfinite(result.null_residuals))
+    assert result.max_row_strength_error < 1e-6
+    assert result.max_column_strength_error < 1e-6
