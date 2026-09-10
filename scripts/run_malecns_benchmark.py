@@ -7,6 +7,9 @@ observations: empirical stages run only when their real artifacts exist.
 The structure/function experiment is BIDI at the region seam. Functional input
 may arrive either through the historical unit-level + registration route or as
 an independently declared region-resolved producer in a named atlas vocabulary.
+For central-brain comparisons, the preferred structural projection is fractional
+neuron-to-neuropil membership derived from the official MaleCNS synapse partner
+table rather than the somaNeuromere annotation.
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ from dashi.analysis.consumer_evidence import EvidenceConsumer
 from dashi.analysis.provenance_dependence import classify_evidence_relation
 from dashi.analysis.structure_function_real import (
     RegionStructuralFeatures,
+    aggregate_connectome_by_membership,
     aggregate_connectome_by_region,
     evaluate_region_structure_function,
     functional_correlation,
@@ -34,6 +38,7 @@ from dashi.analysis.structure_function_real import (
 from dashi.io.artifact_verification import verify_consumer_artifacts
 from dashi.io.functional_imaging_loader import aggregate_functional_traces_by_region, load_functional_traces, load_registration_map
 from dashi.io.malecns_manifest import MaleCNSManifest
+from dashi.io.malecns_neuropil_membership import load_synapse_neuropil_membership
 from dashi.io.malecns_real_data import MALECNS_REAL_AUTHORITIES
 from dashi.io.region_functional_adapter import load_region_functional_producer
 
@@ -105,6 +110,9 @@ def _evaluate_region_carriers(structural, functional_region, *, region_col: str,
             "structural_region_count": len(structural.regions),
             "functional_region_count": len(functional_region.unit_ids),
             "structural_region_field": region_col,
+            "structural_regions": list(structural.regions),
+            "functional_regions": list(functional_region.unit_ids),
+            "common_regions": list(common),
             "functional_source": functional_source,
         }
 
@@ -172,6 +180,7 @@ def _real_structure_function(
     region_functional_path: str | None = None,
     region_functional_atlas: str | None = None,
     region_functional_source: str | None = None,
+    synapse_partners_path: str | None = None,
 ) -> dict[str, Any]:
     structural_required = ("connectome_weights_significant", "body_annotations")
     missing_structural = [k for k in structural_required if not manifest.is_present(k)]
@@ -201,24 +210,9 @@ def _real_structure_function(
     if manifest.is_present("body_neurotransmitters"):
         signed_adjacency = signed_adjacency_for_graph(graph, manifest.target_path("body_neurotransmitters"))
 
-    region_col = _metadata_column(
-        graph,
-        ("somaNeuromere", "neuromere", "neuropil", "region", "primary_neuropil", "soma_neuropil"),
-    )
-    if region_col is None:
-        return {
-            "status": "unavailable",
-            "reason": "connectome annotations expose no recognized region/neuromere column",
-            "available_metadata": sorted(graph.metadata or {}),
-        }
-
-    node_regions = [str(x) for x in graph.metadata[region_col]]
-    structural = aggregate_connectome_by_region(
-        graph.carrier,
-        node_regions,
-        signed_adjacency=signed_adjacency,
-    )
-
+    # Build the functional carrier first so a large synapse table can be
+    # restricted during streaming to exactly the atlas regions this experiment
+    # can consume.
     if using_region_producer:
         producer = load_region_functional_producer(
             region_functional_path,
@@ -244,13 +238,71 @@ def _real_structure_function(
         }
         identity_fraction = registration.direct_identity_fraction()
 
-    return _evaluate_region_carriers(
+    default_partner_path = manifest.base_dir / "connectome" / "syn-partners-male-cns-v1.0-minconf-0.5.feather"
+    partner_path = Path(synapse_partners_path) if synapse_partners_path else default_partner_path
+    structural_source: dict[str, Any]
+
+    if partner_path.is_file():
+        neuropil = load_synapse_neuropil_membership(
+            partner_path,
+            graph.idx_to_id,
+            allowed_regions=functional_region.unit_ids,
+        )
+        structural = aggregate_connectome_by_membership(
+            graph.carrier,
+            neuropil.membership,
+            neuropil.regions,
+            signed_adjacency=signed_adjacency,
+        )
+        region_col = "synapse_primary_neuropil_fractional"
+        structural_source = {
+            "mode": "malecns_synapse_primary_neuropil_fractional_membership",
+            "source_identifier": str(partner_path),
+            "source_rows": neuropil.source_rows,
+            "observed_neuron_count": neuropil.observed_neuron_count,
+            "region_count": len(neuropil.regions),
+            "regions": list(neuropil.regions),
+            "membership_semantics": "per-neuron normalized synapse incidence across retained primary_post neuropils",
+        }
+    else:
+        if synapse_partners_path:
+            return {
+                "status": "unavailable",
+                "reason": "explicit MaleCNS synapse partner table does not exist",
+                "synapse_partners_path": str(partner_path),
+            }
+        region_col = _metadata_column(
+            graph,
+            ("somaNeuromere", "neuromere", "neuropil", "region", "primary_neuropil", "soma_neuropil"),
+        )
+        if region_col is None:
+            return {
+                "status": "unavailable",
+                "reason": "connectome annotations expose no recognized region/neuromere column",
+                "available_metadata": sorted(graph.metadata or {}),
+            }
+        node_regions = [str(x) for x in graph.metadata[region_col]]
+        structural = aggregate_connectome_by_region(
+            graph.carrier,
+            node_regions,
+            signed_adjacency=signed_adjacency,
+        )
+        structural_source = {
+            "mode": "annotation_single_label_fallback",
+            "field": region_col,
+            "warning": "soma/annotation region is not equivalent to central-brain synaptic neuropil occupancy",
+            "preferred_missing_artifact": str(default_partner_path),
+        }
+
+    result = _evaluate_region_carriers(
         structural,
         functional_region,
         region_col=region_col,
         functional_source=functional_source,
         registration_identity_fraction=identity_fraction,
     )
+    result["structural_source"] = structural_source
+    return result
 
 
 def run_benchmark(
@@ -261,6 +313,7 @@ def run_benchmark(
     region_functional_path: str | None = None,
     region_functional_atlas: str | None = None,
     region_functional_source: str | None = None,
+    synapse_partners_path: str | None = None,
 ) -> dict:
     manifest = MaleCNSManifest(base_dir=base_dir)
     prov_graph = manifest.build_provenance_graph()
@@ -271,6 +324,8 @@ def run_benchmark(
     print(f"Mock Run Mode: {mock_run}")
     if region_functional_path:
         print(f"Region-resolved functional producer: {region_functional_path}")
+    if synapse_partners_path:
+        print(f"MaleCNS synapse-derived neuropil producer: {synapse_partners_path}")
 
     rel_same_trial = classify_evidence_relation(prov_graph, "functional_trial_calcium", "behaviour_fictrac_kinematics")
     rel_cross_animal = classify_evidence_relation(prov_graph, "connectome_weights_significant", "functional_trial_calcium")
@@ -295,6 +350,7 @@ def run_benchmark(
             region_functional_path=region_functional_path,
             region_functional_atlas=region_functional_atlas,
             region_functional_source=region_functional_source,
+            synapse_partners_path=synapse_partners_path,
         )
         any_real = any(v.all_present for v in consumer_verification.values()) or bool(region_functional_path)
         any_verified = any(v.all_hash_verified for v in consumer_verification.values())
@@ -377,6 +433,8 @@ def run_benchmark(
             "repository_doi_is_not_direct_file_receipt": True,
             "fit_pairs_are_disjoint_from_held_out_pairs": True,
             "declared_region_identity_is_not_direct_neuron_identity": True,
+            "soma_neuromere_is_not_synaptic_neuropil_occupancy": True,
+            "fractional_neuropil_membership_is_not_neuron_identity": True,
         },
     }
     summary["result_payload_sha256"] = _canonical_sha256(summary)
@@ -405,6 +463,10 @@ def main() -> None:
     parser.add_argument("--region-functional", help="functional table already indexed by declared region IDs")
     parser.add_argument("--region-functional-atlas", help="atlas/vocabulary identifier for --region-functional")
     parser.add_argument("--region-functional-source", help="source/provenance identifier for --region-functional")
+    parser.add_argument(
+        "--synapse-partners",
+        help="official MaleCNS syn-partners Feather; defaults to data/malecns/connectome/syn-partners-male-cns-v1.0-minconf-0.5.feather when present",
+    )
     args = parser.parse_args()
     run_benchmark(
         args.base_dir,
@@ -413,6 +475,7 @@ def main() -> None:
         region_functional_path=args.region_functional,
         region_functional_atlas=args.region_functional_atlas,
         region_functional_source=args.region_functional_source,
+        synapse_partners_path=args.synapse_partners,
     )
 
 
