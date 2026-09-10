@@ -4,6 +4,10 @@
 Requires the selected-supervoxel label image already transformed into
 JRC2018Unisex coordinates and the 46 VFB painted-domain NRRDs fetched by
 ``fetch_vfb_jrc2018_painted_domains.py``.
+
+Painted domains are loaded and consumed one at a time. This keeps peak memory
+bounded by the selected-label volume plus one domain raster instead of retaining
+all 46 full JRC2018 volumes simultaneously.
 """
 
 from __future__ import annotations
@@ -15,7 +19,9 @@ from pathlib import Path
 
 import numpy as np
 
-from dashi.analysis.jrc2018_painted_overlap import compile_selected_labels_against_painted_domains
+from dashi.analysis.jrc2018_painted_overlap import (
+    compile_selected_labels_against_painted_domain_stream,
+)
 
 
 def _require_imaging():
@@ -25,6 +31,21 @@ def _require_imaging():
     except ImportError as exc:
         raise SystemExit("nibabel and pynrrd are required; run in the BIFROST container") from exc
     return nib, nrrd
+
+
+def _domain_stream(manifest_path: Path, selected_shape: tuple[int, ...], nrrd):
+    """Yield one verified painted-domain raster at a time."""
+    with manifest_path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            region = str(row["region"])
+            data, _header = nrrd.read(str(row["local_path"]))
+            arr = np.asarray(data)
+            if arr.shape != selected_shape:
+                raise SystemExit(
+                    f"painted domain {region} shape {arr.shape} != selected label shape {selected_shape}"
+                )
+            yield region, arr
 
 
 def main() -> None:
@@ -43,24 +64,12 @@ def main() -> None:
     selected_rows = np.load(args.selected_rows)
     selected_traces = np.load(args.selected_traces)
 
-    painted: dict[str, np.ndarray] = {}
-    with Path(args.painted_domain_manifest).open(newline="", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        for row in reader:
-            region = str(row["region"])
-            data, _header = nrrd.read(str(row["local_path"]))
-            arr = np.asarray(data)
-            if arr.shape != selected_labels.shape:
-                raise SystemExit(
-                    f"painted domain {region} shape {arr.shape} != selected label shape {selected_labels.shape}"
-                )
-            painted[region] = arr
-
-    compiled = compile_selected_labels_against_painted_domains(
+    manifest_path = Path(args.painted_domain_manifest)
+    compiled = compile_selected_labels_against_painted_domain_stream(
         selected_rows,
         selected_traces,
         selected_labels,
-        painted,
+        _domain_stream(manifest_path, selected_labels.shape, nrrd),
         minimum_overlap_fraction=args.minimum_overlap_fraction,
     )
 
@@ -99,6 +108,7 @@ def main() -> None:
         "contains_ammc": "AMMC" in compiled.region_traces.unit_ids,
         "contains_wed": "WED" in compiled.region_traces.unit_ids,
         "region_functional": str(region_functional),
+        "painted_domain_execution": "streamed_one_domain_at_a_time_with_vectorized_bincount",
         "identity_semantics": "VFB JRC2018Unisex painted-domain overlap of BIFROST-transformed exact selected supervoxels; not neuron identity",
     }
     (out / "gauthey_jrc2018_regions.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
