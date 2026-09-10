@@ -2,7 +2,11 @@ import numpy as np
 
 from dashi.analysis.ndim_structure_function import (
     build_ndim_structural_fibres,
+    evaluate_leave_one_region_out,
     fit_ndim_fibre_consumer,
+    leave_one_region_out_masks,
+    region_label_permutation_null_leave_one_region_out,
+    region_label_permutation_null_pair_holdout,
     select_compatible_fibres,
 )
 from dashi.analysis.structure_function_real import (
@@ -31,6 +35,15 @@ def _structural():
         [.2, .1, -.3, 0.0],
     ])
     return RegionStructuralFeatures(("A", "B", "C", "D"), direct, two_hop, signed)
+
+
+def _observed():
+    return np.array([
+        [0.0, .2, .3, .4],
+        [.2, 0.0, .6, .5],
+        [.3, .6, 0.0, .8],
+        [.4, .5, .8, 0.0],
+    ])
 
 
 def test_ndim_family_keeps_directed_and_shared_neighbour_fibres_distinct():
@@ -78,12 +91,7 @@ def test_exact_redundant_fibre_is_rejected_by_conflict_selection():
 def test_held_out_observations_cannot_change_selected_fibres_or_fitted_coefficients():
     family = build_ndim_structural_fibres(_structural())
     fit, held = pairwise_train_holdout_masks(4)
-    observed = np.array([
-        [0.0, .2, .3, .4],
-        [.2, 0.0, .6, .5],
-        [.3, .6, 0.0, .8],
-        [.4, .5, .8, 0.0],
-    ])
+    observed = _observed()
     first = fit_ndim_fibre_consumer(family, observed, fit, held, correlation_threshold=.999)
     changed = observed.copy()
     changed[held] += 100.0
@@ -94,3 +102,51 @@ def test_held_out_observations_cannot_change_selected_fibres_or_fitted_coefficie
     assert np.allclose(first.feature_means, second.feature_means)
     assert np.allclose(first.feature_scales, second.feature_scales)
     assert not np.allclose(first.held_out_observed, second.held_out_observed)
+
+
+def test_leave_one_region_out_excludes_held_region_from_every_training_pair():
+    n = 5
+    held_region = 2
+    fit, held = leave_one_region_out_masks(n, held_region)
+    ii, jj = np.indices((n, n))
+    assert not np.any(fit & ((ii == held_region) | (jj == held_region)))
+    assert np.all(held[np.triu(((ii == held_region) | (jj == held_region)), 1)])
+    assert int(np.sum(fit)) == 6  # C(4,2)
+    assert int(np.sum(held)) == 4
+
+
+def test_leave_one_region_out_runs_one_fold_per_region():
+    family = build_ndim_structural_fibres(_structural())
+    result = evaluate_leave_one_region_out(family, _observed(), correlation_threshold=1.0)
+    assert tuple(f.held_out_region for f in result.folds) == family.regions
+    assert all(f.train_pair_count == 3 for f in result.folds)
+    assert all(f.held_out_pair_count == 3 for f in result.folds)
+    assert np.isfinite(result.weighted_mean_residual)
+
+
+def test_region_label_permutation_nulls_refit_and_return_valid_p_values():
+    family = build_ndim_structural_fibres(_structural())
+    observed = _observed()
+    fit, held = pairwise_train_holdout_masks(4)
+    pair_null = region_label_permutation_null_pair_holdout(
+        family,
+        observed,
+        fit,
+        held,
+        n_null=8,
+        seed=11,
+        correlation_threshold=1.0,
+    )
+    blocked_null = region_label_permutation_null_leave_one_region_out(
+        family,
+        observed,
+        n_null=8,
+        seed=12,
+        correlation_threshold=1.0,
+    )
+    assert pair_null.null_residuals.shape == (8,)
+    assert blocked_null.null_residuals.shape == (8,)
+    assert 0.0 < pair_null.empirical_p_value <= 1.0
+    assert 0.0 < blocked_null.empirical_p_value <= 1.0
+    assert np.isfinite(pair_null.observed_residual)
+    assert np.isfinite(blocked_null.observed_residual)
