@@ -23,6 +23,7 @@ if ! "$ENGINE" image inspect "$IMAGE" >/dev/null 2>&1; then
 fi
 
 exec "$ENGINE" run --rm \
+  --net=host \
   --volume "$ROOT:/work" \
   --workdir /work \
   --env PYTHONPATH=/work \
