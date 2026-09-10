@@ -2,17 +2,11 @@
 """Register the reconstructed Gauthey a2_r5 native selected field into FDA.
 
 This executable uses the published BIFROST CLI rather than reimplementing image
-registration.  It:
+registration. It can stop after the experimentally meaningful native -> FDA
+registration/label transform, or continue to neuropil aggregation when a painted
+FDA atlas and region-name map are supplied.
 
-1. loads the deposited a2_r5 mean-brain NIfTI;
-2. converts the sparse native selected-supervoxel label volume onto that NIfTI's
-   voxel-axis order while preserving its affine/header;
-3. runs ``bifrost register`` with the mean brain as moving and FDA as fixed;
-4. runs ``bifrost transform --label_image`` on the sparse selected labels;
-5. overlaps the transformed selected labels against an FDA neuropil label image;
-6. emits time x region activity ready for the generic MaleCNS benchmark.
-
-The BIFROST paper/source is:
+Scientific source:
 Bella E. Brezovec, Andrew B. Berger, Yukun A. Hao et al.,
 "BIFROST: A method for registering diverse imaging datasets of the Drosophila
 brain", PNAS 121(47):e2322687121 (2024), DOI 10.1073/pnas.2322687121.
@@ -59,14 +53,19 @@ def main() -> None:
     parser.add_argument("--selected-rows", required=True)
     parser.add_argument("--selected-traces", required=True)
     parser.add_argument("--fda-template", required=True)
-    parser.add_argument("--fda-atlas-labels", required=True)
-    parser.add_argument("--atlas-region-map", required=True)
+    parser.add_argument("--fda-atlas-labels")
+    parser.add_argument("--atlas-region-map")
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--bifrost-bin", default="bifrost")
     parser.add_argument("--minimum-overlap-fraction", type=float, default=0.5)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--skip-registration", action="store_true")
     args = parser.parse_args()
+
+    if bool(args.fda_atlas_labels) != bool(args.atlas_region_map):
+        raise SystemExit(
+            "--fda-atlas-labels and --atlas-region-map must either both be supplied or both omitted"
+        )
 
     nib = _require_nibabel()
     bifrost_bin = shutil.which(args.bifrost_bin)
@@ -122,79 +121,108 @@ def main() -> None:
         raise SystemExit(
             f"transformed selected-label image not found: {transformed_label_nifti}"
         )
-
-    selected_img = nib.load(transformed_label_nifti)
-    atlas_img = nib.load(args.fda_atlas_labels)
-    if selected_img.shape != atlas_img.shape:
-        raise SystemExit(
-            f"FDA selected-label shape {selected_img.shape} != atlas shape {atlas_img.shape}"
-        )
-    selected_affine = np.asarray(selected_img.affine)
-    atlas_affine = np.asarray(atlas_img.affine)
-    if not np.allclose(selected_affine, atlas_affine, atol=1e-6, rtol=1e-6):
-        raise SystemExit("FDA selected labels and atlas labels do not share the same affine")
+    if not (registration_dir / "transform.h5").exists():
+        raise SystemExit(f"BIFROST transform missing: {registration_dir / 'transform.h5'}")
 
     selected_rows = np.load(args.selected_rows)
     selected_traces = np.load(args.selected_traces)
-    region_names = load_atlas_region_names(args.atlas_region_map)
-    compiled = aggregate_transformed_selected_labels_to_regions(
-        selected_rows,
-        selected_traces,
-        np.asarray(selected_img.dataobj),
-        np.asarray(atlas_img.dataobj),
-        region_names,
-        minimum_overlap_fraction=args.minimum_overlap_fraction,
-    )
+    if selected_rows.ndim != 1:
+        raise SystemExit("selected rows must be one-dimensional")
+    if selected_traces.ndim != 2 or selected_traces.shape[0] != selected_rows.size:
+        raise SystemExit("selected traces must be [selected_roi,time] and align with selected rows")
 
-    assignments_path = output / "selected_roi_fda_regions.csv"
-    with assignments_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(
-            [
-                "selected_row",
-                "atlas_region_id",
-                "atlas_region",
-                "voxel_count",
-                "overlap_voxel_count",
-                "overlap_fraction",
-            ]
-        )
-        for item in compiled.assignments:
-            writer.writerow(
-                [
-                    item.selected_row,
-                    item.atlas_region_id,
-                    item.atlas_region,
-                    item.voxel_count,
-                    item.overlap_voxel_count,
-                    f"{item.overlap_fraction:.17g}",
-                ]
-            )
+    selected_img = nib.load(transformed_label_nifti)
+    transformed_values = np.asarray(selected_img.dataobj)
+    surviving_selected_labels = np.unique(transformed_values.astype(np.int64, copy=False))
+    surviving_selected_labels = surviving_selected_labels[surviving_selected_labels > 0]
+    expected_labels = {int(row) + 1 for row in selected_rows}
+    surviving_labels = {int(value) for value in surviving_selected_labels}
+    if not surviving_labels.issubset(expected_labels):
+        bad = sorted(surviving_labels - expected_labels)[:10]
+        raise SystemExit(f"label-preserving transform emitted unexpected selected-label values: {bad}")
 
-    region_trace_path = output / "region_functional.csv"
-    with region_trace_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(["time_index", *compiled.region_traces.unit_ids])
-        for i, values in enumerate(compiled.region_traces.traces):
-            writer.writerow([i, *[f"{float(v):.17g}" for v in values]])
-
-    summary = {
+    summary: dict[str, object] = {
         "mean_brain": str(Path(args.mean_brain)),
         "fda_template": str(Path(args.fda_template)),
-        "fda_atlas_labels": str(Path(args.fda_atlas_labels)),
         "native_to_nifti_axis_permutation": list(permutation),
         "selected_roi_count": int(selected_rows.size),
-        "assigned_selected_roi_count": int(compiled.assigned_selected_count),
-        "unassigned_selected_roi_count": int(compiled.unassigned_selected_count),
-        "region_count": len(compiled.region_traces.unit_ids),
-        "timepoints": int(compiled.region_traces.traces.shape[0]),
-        "minimum_overlap_fraction": float(compiled.minimum_overlap_fraction),
+        "selected_labels_surviving_fda_transform": len(surviving_labels),
+        "selected_labels_lost_fda_transform": int(selected_rows.size - len(surviving_labels)),
         "registration_dir": str(registration_dir),
+        "transform_h5": str(registration_dir / "transform.h5"),
         "transformed_selected_labels": str(transformed_label_nifti),
-        "region_assignments": str(assignments_path),
-        "region_functional": str(region_trace_path),
-        "identity_semantics": "FDA neuropil overlap of exact recovered selected supervoxels; not neuron identity",
+        "atlas_aggregation_executed": False,
+        "identity_semantics": "BIFROST-transformed exact recovered selected supervoxels; not neuron identity",
     }
+
+    if args.fda_atlas_labels is not None:
+        atlas_img = nib.load(args.fda_atlas_labels)
+        if selected_img.shape != atlas_img.shape:
+            raise SystemExit(
+                f"FDA selected-label shape {selected_img.shape} != atlas shape {atlas_img.shape}"
+            )
+        if not np.allclose(
+            np.asarray(selected_img.affine), np.asarray(atlas_img.affine), atol=1e-6, rtol=1e-6
+        ):
+            raise SystemExit("FDA selected labels and atlas labels do not share the same affine")
+
+        region_names = load_atlas_region_names(args.atlas_region_map)
+        compiled = aggregate_transformed_selected_labels_to_regions(
+            selected_rows,
+            selected_traces,
+            transformed_values,
+            np.asarray(atlas_img.dataobj),
+            region_names,
+            minimum_overlap_fraction=args.minimum_overlap_fraction,
+        )
+
+        assignments_path = output / "selected_roi_fda_regions.csv"
+        with assignments_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(
+                [
+                    "selected_row",
+                    "atlas_region_id",
+                    "atlas_region",
+                    "voxel_count",
+                    "overlap_voxel_count",
+                    "overlap_fraction",
+                ]
+            )
+            for item in compiled.assignments:
+                writer.writerow(
+                    [
+                        item.selected_row,
+                        item.atlas_region_id,
+                        item.atlas_region,
+                        item.voxel_count,
+                        item.overlap_voxel_count,
+                        f"{item.overlap_fraction:.17g}",
+                    ]
+                )
+
+        region_trace_path = output / "region_functional.csv"
+        with region_trace_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["time_index", *compiled.region_traces.unit_ids])
+            for i, values in enumerate(compiled.region_traces.traces):
+                writer.writerow([i, *[f"{float(v):.17g}" for v in values]])
+
+        summary.update(
+            {
+                "fda_atlas_labels": str(Path(args.fda_atlas_labels)),
+                "atlas_aggregation_executed": True,
+                "assigned_selected_roi_count": int(compiled.assigned_selected_count),
+                "unassigned_selected_roi_count": int(compiled.unassigned_selected_count),
+                "region_count": len(compiled.region_traces.unit_ids),
+                "timepoints": int(compiled.region_traces.traces.shape[0]),
+                "minimum_overlap_fraction": float(compiled.minimum_overlap_fraction),
+                "region_assignments": str(assignments_path),
+                "region_functional": str(region_trace_path),
+                "identity_semantics": "FDA neuropil overlap of exact recovered selected supervoxels; not neuron identity",
+            }
+        )
+
     summary_path = output / "gauthey_lbm_fda_registration.json"
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(json.dumps(summary, indent=2))
