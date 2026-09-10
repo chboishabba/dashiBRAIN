@@ -80,6 +80,71 @@ def reorder_native_labels_to_nifti_shape(
     return np.transpose(labels, perm), perm
 
 
+def centered_lbm_affine_in_fda_axes(
+    moving_shape: Sequence[int],
+    fixed_shape: Sequence[int],
+    fixed_affine: np.ndarray,
+    *,
+    inplane_microns: float = 1.3,
+    axial_microns: float = 9.0,
+) -> np.ndarray:
+    """Place Gauthey ``(y,x,z)`` voxels in FDA world axes and align centres.
+
+    The deposited Gauthey mean brain has voxel shape ``(226, 512, 27)``: its
+    first two *array* axes are ``(y, x)``, whereas FDA's first two world axes are
+    ``(x, y)``.  Treating the moving array axes as direct FDA x/y axes produces
+    physical extents ~294 x 666 um instead of ~666 x 294 um and can clip most of
+    the moving volume during registration.
+
+    This affine inherits FDA's world-axis directions, maps moving voxel axis 0
+    onto FDA world Y, axis 1 onto FDA world X, and axis 2 onto FDA world Z, with
+    the published LBM spacings.  Translation is chosen so moving and fixed
+    physical centres coincide before BIFROST estimates affine/non-linear terms.
+    """
+    moving = tuple(int(v) for v in moving_shape)
+    fixed = tuple(int(v) for v in fixed_shape)
+    if len(moving) != 3 or len(fixed) != 3:
+        raise ValueError("moving and fixed shapes must be three-dimensional")
+    if inplane_microns <= 0 or axial_microns <= 0:
+        raise ValueError("voxel spacings must be positive")
+
+    fa = np.asarray(fixed_affine, dtype=float)
+    if fa.shape != (4, 4):
+        raise ValueError("fixed affine must be 4x4")
+    fixed_linear = fa[:3, :3]
+    norms = np.linalg.norm(fixed_linear, axis=0)
+    if np.any(norms <= 0):
+        raise ValueError("fixed affine contains a degenerate spatial axis")
+    fixed_dirs = fixed_linear / norms
+
+    linear = np.column_stack(
+        [
+            fixed_dirs[:, 1] * inplane_microns,  # moving y -> FDA world y
+            fixed_dirs[:, 0] * inplane_microns,  # moving x -> FDA world x
+            fixed_dirs[:, 2] * axial_microns,
+        ]
+    )
+
+    fixed_index_center = (np.asarray(fixed, dtype=float) - 1.0) / 2.0
+    fixed_world_center = fa[:3, :3] @ fixed_index_center + fa[:3, 3]
+    moving_index_center = (np.asarray(moving, dtype=float) - 1.0) / 2.0
+
+    affine = np.eye(4, dtype=float)
+    affine[:3, :3] = linear
+    affine[:3, 3] = fixed_world_center - linear @ moving_index_center
+    return affine
+
+
+def physical_extent_microns(shape: Sequence[int], affine: np.ndarray) -> tuple[float, float, float]:
+    """Return the physical voxel-axis extents implied by a micron-space affine."""
+    shp = np.asarray(tuple(int(v) for v in shape), dtype=float)
+    if shp.shape != (3,):
+        raise ValueError("shape must be three-dimensional")
+    linear = np.asarray(affine, dtype=float)[:3, :3]
+    spacing = np.linalg.norm(linear, axis=0)
+    return tuple(float(v) for v in (shp * spacing))
+
+
 def load_atlas_region_names(path: str | Path) -> dict[int, str]:
     """Load atlas label names from JSON or a two-column CSV.
 
