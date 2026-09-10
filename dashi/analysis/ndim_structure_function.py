@@ -92,6 +92,10 @@ class PermutationNullResult:
     observed_residual: float
     null_residuals: np.ndarray
     empirical_p_value: float
+    fold_regions: tuple[str, ...] = ()
+    observed_fold_residuals: np.ndarray | None = None
+    null_fold_residuals: np.ndarray | None = None
+    fold_empirical_p_values: np.ndarray | None = None
 
 
 def _safe_row_normalize_dense(a: np.ndarray) -> np.ndarray:
@@ -334,7 +338,12 @@ def region_label_permutation_null_leave_one_region_out(
     seed: int = 0,
     correlation_threshold: float = 0.98,
 ) -> PermutationNullResult:
-    """Region-label null for unseen-region generalization, refitting every fold/null."""
+    """Region-label null for unseen-region generalization, refitting every fold/null.
+
+    Besides the global weighted LORO score, retain each null draw's residual for
+    each held-out region. This lets the empirical result distinguish a broad
+    cross-neuropil advantage from a global score driven by a few easy folds.
+    """
     if n_null < 1:
         raise ValueError("n_null must be >= 1")
     observed_result = evaluate_leave_one_region_out(
@@ -342,13 +351,32 @@ def region_label_permutation_null_leave_one_region_out(
     )
     rng = np.random.default_rng(seed)
     n = len(family.regions)
+    observed_folds = np.asarray([f.mean_residual for f in observed_result.folds], dtype=float)
+    null_folds = np.empty((n_null, n), dtype=float)
     nulls = np.empty(n_null, dtype=float)
     for k in range(n_null):
         permuted = _permute_symmetric_observation(observed, rng.permutation(n))
-        nulls[k] = evaluate_leave_one_region_out(
+        null_result = evaluate_leave_one_region_out(
             family,
             permuted,
             correlation_threshold=correlation_threshold,
-        ).weighted_mean_residual
+        )
+        null_folds[k, :] = [f.mean_residual for f in null_result.folds]
+        nulls[k] = null_result.weighted_mean_residual
     p = float((1 + np.count_nonzero(nulls <= observed_result.weighted_mean_residual)) / (n_null + 1))
-    return PermutationNullResult(observed_result.weighted_mean_residual, nulls, p)
+    fold_p = np.asarray(
+        [
+            (1 + np.count_nonzero(null_folds[:, i] <= observed_folds[i])) / (n_null + 1)
+            for i in range(n)
+        ],
+        dtype=float,
+    )
+    return PermutationNullResult(
+        observed_result.weighted_mean_residual,
+        nulls,
+        p,
+        fold_regions=tuple(family.regions),
+        observed_fold_residuals=observed_folds,
+        null_fold_residuals=null_folds,
+        fold_empirical_p_values=fold_p,
+    )
