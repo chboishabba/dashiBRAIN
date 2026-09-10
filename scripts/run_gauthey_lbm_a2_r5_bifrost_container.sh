@@ -29,6 +29,7 @@ cd "$ROOT"
 if ! "$ENGINE" image inspect "$IMAGE" >/dev/null 2>&1; then
   echo "+ building $IMAGE from ClandininLab/bifrost@$BIFROST_COMMIT" >&2
   "$ENGINE" build \
+    --network=host \
     --tag "$IMAGE" \
     "https://github.com/ClandininLab/bifrost.git#${BIFROST_COMMIT}"
 fi
@@ -37,6 +38,7 @@ fi
 # Mount the repository at a stable path so all relative data paths resolve inside
 # the container exactly as they do on the host.
 exec "$ENGINE" run --rm \
+  --net=host \
   --volume "$ROOT:/work" \
   --workdir /work \
   --env PYTHONPATH=/work \

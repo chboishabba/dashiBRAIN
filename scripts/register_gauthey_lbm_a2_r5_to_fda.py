@@ -60,6 +60,9 @@ def main() -> None:
     parser.add_argument("--minimum-overlap-fraction", type=float, default=0.5)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--skip-registration", action="store_true")
+    parser.add_argument("--skip-syn", action="store_true", help="Skip SyN pre-registration in BIFROST")
+    parser.add_argument("--skip-synthmorph", action="store_true", help="Skip SynthMorph inference in BIFROST")
+    parser.add_argument("--downsample-to", type=float, default=-1.0, help="Downsample to isotropic resolution in microns before registration")
     args = parser.parse_args()
 
     if bool(args.fda_atlas_labels) != bool(args.atlas_region_map):
@@ -81,28 +84,58 @@ def main() -> None:
     mean_img = nib.load(args.mean_brain)
     if len(mean_img.shape) != 3:
         raise SystemExit(f"mean brain must be 3-D, got {mean_img.shape}")
+
+    # Gauthey LBM ground truth: 1.3 um in-plane, 9.0 um axial.
+    # Set xyzt_units to micron and zooms to (1.3, 1.3, 9.0) so ITK/ANTs interprets
+    # the physical millimeter dimensions consistently with the BIFROST FDA template.
+    calibrated_mean_nifti = output / "mean_brain_calibrated.nii"
+    mean_header = mean_img.header.copy()
+    mean_header.set_xyzt_units("micron", "unknown")
+    mean_header.set_zooms((1.3, 1.3, 9.0))
+    calibrated_affine = np.array([
+        [-1.3,  0.0,  0.0,  0.0],
+        [ 0.0, -1.3,  0.0,  0.0],
+        [ 0.0,  0.0,  9.0,  0.0],
+        [ 0.0,  0.0,  0.0,  1.0],
+    ], dtype=np.float64)
+    nib.save(
+        nib.Nifti1Image(mean_img.get_fdata(dtype=np.float32), calibrated_affine, mean_header),
+        calibrated_mean_nifti,
+    )
+
     native_labels = np.load(args.native_label_volume)
     nifti_labels, permutation = reorder_native_labels_to_nifti_shape(
         native_labels, mean_img.shape
     )
-    label_header = mean_img.header.copy()
+    label_header = mean_header.copy()
     label_header.set_data_dtype(np.int32)
     nib.save(
-        nib.Nifti1Image(nifti_labels.astype(np.int32, copy=False), mean_img.affine, label_header),
+        nib.Nifti1Image(nifti_labels.astype(np.int32, copy=False), calibrated_affine, label_header),
         native_label_nifti,
     )
 
     if not args.skip_registration:
+        bifrost_downsample = args.downsample_to
+        if bifrost_downsample >= 0.1:
+            # Convert microns to millimeters for ITK/ANTs internal spacing
+            bifrost_downsample /= 1000.0
+
         register_cmd = [
             bifrost_bin,
             "register",
-            str(Path(args.mean_brain).resolve()),
+            str(calibrated_mean_nifti.resolve()),
             str(Path(args.fda_template).resolve()),
             str(registration_dir.resolve()),
             "-v",
         ]
         if args.force:
             register_cmd.append("--force")
+        if args.skip_syn:
+            register_cmd.append("--skip_syn")
+        if args.skip_synthmorph:
+            register_cmd.append("--skip_synthmorph")
+        if bifrost_downsample > 0:
+            register_cmd.extend(["--downsample_to", str(bifrost_downsample)])
         _run(register_cmd)
 
         transform_cmd = [

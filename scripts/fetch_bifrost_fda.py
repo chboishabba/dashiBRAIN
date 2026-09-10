@@ -19,6 +19,8 @@ import argparse
 from hashlib import sha256
 import json
 from pathlib import Path
+import re
+import time
 import urllib.parse
 import urllib.request
 
@@ -98,6 +100,59 @@ def _file_resource(file_meta: dict) -> tuple[int | None, str]:
     return file_id, download_url
 
 
+def resolve_direct_download_url(file_id: int | None, fallback_url: str) -> str:
+    """Resolve direct AWS S3 URL for a public Dryad file, passing PoW challenge if needed."""
+    if file_id is None:
+        return fallback_url
+    stream_url = f"https://datadryad.org/downloads/file_stream/{file_id}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    cookie_processor = urllib.request.HTTPCookieProcessor()
+    opener = urllib.request.build_opener(cookie_processor)
+    req = urllib.request.Request(stream_url, headers=headers)
+    try:
+        with opener.open(req, timeout=60) as resp:
+            final_url = resp.geturl()
+            if "amazonaws.com" in final_url or resp.headers.get("Content-Type") == "application/octet-stream":
+                return final_url
+            body = resp.read().decode("utf-8", errors="ignore")
+    except Exception:
+        return fallback_url or stream_url
+
+    match = re.search(r'<script id="anubis_challenge" type="application/json">(.*?)</script>', body, re.DOTALL)
+    if not match:
+        return fallback_url or stream_url
+
+    try:
+        ch = json.loads(match.group(1))
+        rand_data = ch["challenge"]["randomData"]
+        diff = int(ch["rules"]["difficulty"])
+        cid = ch["challenge"]["id"]
+        nonce = 0
+        target = "0" * diff
+        t0 = time.time()
+        while True:
+            h = sha256((rand_data + str(nonce)).encode("utf-8")).hexdigest()
+            if h.startswith(target):
+                break
+            nonce += 1
+        elapsed = int((time.time() - t0) * 1000)
+        pass_url = (
+            f"https://datadryad.org/.within.website/x/cmd/anubis/api/pass-challenge"
+            f"?id={urllib.parse.quote(str(cid))}"
+            f"&response={urllib.parse.quote(h)}"
+            f"&nonce={nonce}"
+            f"&redir={urllib.parse.quote(stream_url)}"
+            f"&elapsedTime={elapsed}"
+        )
+        pass_req = urllib.request.Request(pass_url, headers=headers)
+        with opener.open(pass_req, timeout=60) as pass_resp:
+            return pass_resp.geturl()
+    except Exception:
+        return fallback_url or stream_url
+
+
 def _hash_existing_prefix(path: Path) -> tuple[int, object]:
     hasher = sha256()
     size = 0
@@ -115,6 +170,7 @@ def _hash_existing_prefix(path: Path) -> tuple[int, object]:
 def download_public_file(file_meta: dict, output_path: Path, *, chunk_bytes: int = 8 << 20) -> dict:
     """Resume a public Dryad file by exact byte range and verify before promotion."""
     file_id, download_url = _file_resource(file_meta)
+    direct_url = resolve_direct_download_url(file_id, download_url)
     expected_size = int(file_meta.get("size") or 0)
     if expected_size <= 0:
         raise RuntimeError("Dryad file metadata lacks a positive size")
@@ -133,7 +189,7 @@ def download_public_file(file_meta: dict, output_path: Path, *, chunk_bytes: int
         cursor = written
         while cursor < expected_size:
             end = min(expected_size - 1, cursor + chunk_bytes - 1)
-            chunk, _headers = _request(download_url, cursor, end)
+            chunk, _headers = _request(direct_url, cursor, end)
             expected = end - cursor + 1
             if len(chunk) != expected:
                 raise RuntimeError(

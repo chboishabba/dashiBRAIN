@@ -84,10 +84,11 @@ def main() -> None:
 
     origin_raw = jrc_header.get("space origin")
     if origin_raw is None:
-        raise SystemExit("VFB JRC2018Unisex NRRD lacks space origin")
-    origin = np.asarray(origin_raw, dtype=float)
-    if origin.shape != (3,) or not np.all(np.isfinite(origin)):
-        raise SystemExit(f"invalid VFB JRC2018Unisex space origin: {origin_raw!r}")
+        origin = np.zeros(3, dtype=float)
+    else:
+        origin = np.asarray(origin_raw, dtype=float)
+        if origin.shape != (3,) or not np.all(np.isfinite(origin)):
+            raise SystemExit(f"invalid VFB JRC2018Unisex space origin: {origin_raw!r}")
 
     # VFB viewer raster should cover an adult fly brain, not a millimetre-scale
     # or metre-scale object.  This catches another hidden unit mismatch early.
@@ -97,15 +98,21 @@ def main() -> None:
             f"implausible VFB JRC2018Unisex physical extents in microns: {extents_um}"
         )
 
-    affine = np.eye(4, dtype=float)
-    affine[:3, :3] = directions.T
-    affine[:3, 3] = origin
-    header = nib.Nifti1Header()
-    header.set_data_dtype(jrc_data.dtype)
-    header.set_xyzt_units("micron", "unknown")
-    header.set_zooms(tuple(float(v) for v in zooms))
-    nib.save(nib.Nifti1Image(jrc_data, affine, header), jrc_nifti)
-    del jrc_data
+    affine = np.array(
+        [
+            [zooms[0], 0.0, 0.0, origin[0]],
+            [0.0, 0.0, zooms[2], origin[2]],
+            [0.0, zooms[1], 0.0, origin[1]],
+            [0.0, 0.0, 0.0, 1.0],
+        ],
+        dtype=np.float64,
+    )
+    jrc_img = nib.Nifti1Image(jrc_data, affine)
+    jrc_img.header.set_data_dtype(jrc_data.dtype)
+    jrc_img.header.set_xyzt_units("micron", "unknown")
+    jrc_img.header.set_zooms((float(zooms[0]), float(zooms[1]), float(zooms[2])))
+    nib.save(jrc_img, jrc_nifti)
+    del jrc_data, jrc_img
 
     downsample_mm = args.downsample_to / 1000.0
     register_cmd = [
@@ -138,6 +145,17 @@ def main() -> None:
     selected_rows = np.load(args.selected_rows).astype(np.int64, copy=False)
     img = nib.load(selected_jrc)
     data = np.asarray(img.dataobj)
+    if data.shape != VFB_JRC_SHAPE:
+        import ants
+
+        resampled = ants.resample_image_to_target(
+            ants.image_read(str(selected_jrc)),
+            ants.image_read(str(jrc_nifti)),
+            interp_type="genericLabel",
+        )
+        ants.image_write(resampled, str(selected_jrc))
+        img = nib.load(selected_jrc)
+        data = np.asarray(img.dataobj)
     if data.shape != VFB_JRC_SHAPE:
         raise SystemExit(
             f"transformed selected labels landed on {data.shape}, expected VFB grid {VFB_JRC_SHAPE}"
