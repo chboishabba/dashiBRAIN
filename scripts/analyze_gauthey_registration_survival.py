@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """Analyze which exact Gauthey a2_r5 selected supervoxels survive registration.
 
-This is experiment-facing QC for the native -> FDA hop.  It joins the exact
+This is experiment-facing QC for the native -> FDA hop. It joins the exact
 native ROI geometry with the transformed selected-label image and reports whether
 label loss is associated with source plane/depth, native centroid, ROI size, or
 native field-of-view boundaries.
 
 The published Fig. 3 preprocessing assigns the second LBM trial
-``04032024_6f_a2_r5`` the ``depth_a1`` plane-depth vector.  Those depths are
+``04032024_6f_a2_r5`` the ``depth_a1`` plane-depth vector. Those depths are
 retained here as source coordinates; they are not atlas identities.
+
+Because native LBM pixels and FDA raster voxels have different physical sizes,
+raw voxel-count ratios are not treated as retention fractions. We report both
+raster support counts and physical support volumes, with the latter derived from
+the NIfTI affine/unit metadata for the transformed FDA image.
 """
 
 from __future__ import annotations
@@ -57,6 +62,9 @@ DEPTH_A1_UM = np.array(
 )
 NATIVE_Y = 226
 NATIVE_X = 512
+LBM_INPLANE_UM = 1.3
+LBM_AXIAL_UM = 9.0
+LBM_NATIVE_PIXEL_SUPPORT_UM3 = LBM_INPLANE_UM * LBM_INPLANE_UM * LBM_AXIAL_UM
 
 
 def _read_native_rois(path: Path) -> list[dict]:
@@ -83,6 +91,7 @@ def _read_native_rois(path: Path) -> list[dict]:
                 raise ValueError(f"plane_index outside published depth vector: {plane}")
             y = float(raw["centroid_y"])
             x = float(raw["centroid_x"])
+            voxel_count = int(raw["voxel_count"])
             rows.append(
                 {
                     "selected_row": int(raw["selected_row"]),
@@ -90,7 +99,8 @@ def _read_native_rois(path: Path) -> list[dict]:
                     "plane_index": plane,
                     "cluster_index": int(raw["cluster_index"]),
                     "published_plane_depth_um": float(DEPTH_A1_UM[plane]),
-                    "voxel_count": int(raw["voxel_count"]),
+                    "voxel_count": voxel_count,
+                    "native_support_volume_um3": float(voxel_count * LBM_NATIVE_PIXEL_SUPPORT_UM3),
                     "centroid_y": y,
                     "centroid_x": x,
                     "native_edge_distance_px": float(
@@ -103,11 +113,40 @@ def _read_native_rois(path: Path) -> list[dict]:
     return rows
 
 
-def _observed_selected_rows(path: Path) -> set[int]:
+def _spatial_unit_to_microns(unit: str) -> float:
+    normalized = str(unit).strip().lower()
+    if normalized in {"micron", "micrometer", "micrometre", "um"}:
+        return 1.0
+    if normalized in {"mm", "millimeter", "millimetre"}:
+        return 1000.0
+    if normalized in {"meter", "metre", "m"}:
+        return 1_000_000.0
+    raise ValueError(f"unsupported/unknown NIfTI spatial unit for physical QC: {unit!r}")
+
+
+def _voxel_volume_um3(img: nib.spatialimages.SpatialImage) -> float:
+    spatial_unit, _ = img.header.get_xyzt_units()
+    scale_um = _spatial_unit_to_microns(spatial_unit)
+    volume_native_units = abs(float(np.linalg.det(np.asarray(img.affine, dtype=float)[:3, :3])))
+    if not np.isfinite(volume_native_units) or volume_native_units <= 0:
+        raise ValueError("FDA selected-label affine has non-positive/invalid voxel volume")
+    return volume_native_units * (scale_um ** 3)
+
+
+def _observed_selected_support(path: Path) -> tuple[dict[int, int], float]:
     img = nib.load(path)
-    data = np.asarray(img.dataobj)
-    values = {int(v) for v in np.unique(data) if int(v) != 0}
-    return {value - 1 for value in values}
+    data = np.asarray(img.dataobj).astype(np.int64, copy=False)
+    positive = data[data > 0]
+    voxel_volume_um3 = _voxel_volume_um3(img)
+    if positive.size == 0:
+        return {}, voxel_volume_um3
+    labels, counts = np.unique(positive, return_counts=True)
+    return {int(label) - 1: int(count) for label, count in zip(labels, counts)}, voxel_volume_um3
+
+
+def _observed_selected_rows(path: Path) -> set[int]:
+    support, _ = _observed_selected_support(path)
+    return set(support)
 
 
 def _group_summary(rows: list[dict], key: str) -> list[dict]:
@@ -165,14 +204,23 @@ def main() -> None:
     args = parser.parse_args()
 
     native_rows = _read_native_rois(Path(args.native_rois))
-    surviving = _observed_selected_rows(Path(args.selected_labels_fda))
+    fda_support, fda_voxel_volume_um3 = _observed_selected_support(Path(args.selected_labels_fda))
+    surviving = set(fda_support)
     declared = {int(row["selected_row"]) for row in native_rows}
     unexpected = sorted(surviving - declared)
     if unexpected:
         raise SystemExit(f"FDA image contains labels absent from native ROI table: {unexpected[:10]}")
 
     for row in native_rows:
-        row["survived_fda"] = int(row["selected_row"]) in surviving
+        selected_row = int(row["selected_row"])
+        fda_voxels = int(fda_support.get(selected_row, 0))
+        row["survived_fda"] = selected_row in surviving
+        row["fda_voxel_count"] = fda_voxels
+        row["fda_support_volume_um3"] = float(fda_voxels * fda_voxel_volume_um3)
+        native_volume = float(row["native_support_volume_um3"])
+        row["fda_to_native_support_volume_ratio"] = (
+            float(row["fda_support_volume_um3"]) / native_volume if native_volume > 0 else 0.0
+        )
 
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -184,10 +232,14 @@ def main() -> None:
         "cluster_index",
         "published_plane_depth_um",
         "voxel_count",
+        "native_support_volume_um3",
         "centroid_y",
         "centroid_x",
         "native_edge_distance_px",
         "survived_fda",
+        "fda_voxel_count",
+        "fda_support_volume_um3",
+        "fda_to_native_support_volume_ratio",
     ]
     with row_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
@@ -212,15 +264,22 @@ def main() -> None:
         "fda_surviving_selected_roi_count": survived_n,
         "fda_lost_selected_roi_count": total - survived_n,
         "survival_fraction": survived_n / total,
+        "fda_voxel_volume_um3": fda_voxel_volume_um3,
+        "native_support_volume_semantics": "source 2-D supervoxel pixel count multiplied by published 1.3um x 1.3um in-plane sampling and 9.0um plane spacing",
+        "support_ratio_semantics": "FDA raster support volume / native source support volume; QC diagnostic only, not a conserved biological volume or registration accuracy score",
         "published_depth_semantics": "Fig3 preprocessing depth_a1 vector assigned to second LBM trial; source coordinate, not atlas identity",
         "survived_distributions": {
             field: _distribution(native_rows, field, True)
             for field in (
                 "published_plane_depth_um",
                 "voxel_count",
+                "native_support_volume_um3",
                 "centroid_y",
                 "centroid_x",
                 "native_edge_distance_px",
+                "fda_voxel_count",
+                "fda_support_volume_um3",
+                "fda_to_native_support_volume_ratio",
             )
         },
         "lost_distributions": {
@@ -228,9 +287,13 @@ def main() -> None:
             for field in (
                 "published_plane_depth_um",
                 "voxel_count",
+                "native_support_volume_um3",
                 "centroid_y",
                 "centroid_x",
                 "native_edge_distance_px",
+                "fda_voxel_count",
+                "fda_support_volume_um3",
+                "fda_to_native_support_volume_ratio",
             )
         },
         "row_output": str(row_path),
