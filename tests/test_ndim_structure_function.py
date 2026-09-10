@@ -156,6 +156,29 @@ def test_region_label_permutation_nulls_refit_and_return_valid_p_values():
     assert np.isfinite(blocked_null.observed_residual)
 
 
+def test_loro_null_retains_fold_matched_refitted_distributions():
+    family = build_ndim_structural_fibres(_structural())
+    blocked_null = region_label_permutation_null_leave_one_region_out(
+        family,
+        _observed(),
+        n_null=9,
+        seed=21,
+        correlation_threshold=1.0,
+    )
+    assert blocked_null.fold_regions == family.regions
+    assert blocked_null.observed_fold_residuals is not None
+    assert blocked_null.null_fold_residuals is not None
+    assert blocked_null.fold_empirical_p_values is not None
+    assert blocked_null.observed_fold_residuals.shape == (4,)
+    assert blocked_null.null_fold_residuals.shape == (9, 4)
+    assert blocked_null.fold_empirical_p_values.shape == (4,)
+    assert np.all((blocked_null.fold_empirical_p_values > 0.0) & (blocked_null.fold_empirical_p_values <= 1.0))
+    assert not np.allclose(
+        blocked_null.null_fold_residuals,
+        blocked_null.null_residuals[:, None],
+    )
+
+
 def test_loro_stability_summary_tracks_fold_selection_and_coefficients():
     family = build_ndim_structural_fibres(_structural())
     blocked = evaluate_leave_one_region_out(family, _observed(), correlation_threshold=1.0)
