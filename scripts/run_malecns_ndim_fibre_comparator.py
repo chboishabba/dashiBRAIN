@@ -8,8 +8,11 @@ feature geometry only, fits that subset on training pairs only, freezes it, and
 then evaluates untouched held-out pairs.
 
 The script also reports a stricter leave-one-region-out result, where every pair
-containing the held-out neuropil is excluded from fitting, plus region-label
-permutation nulls that refit the complete NDim consumer inside every null draw.
+containing the held-out neuropil is excluded from fitting; region-label
+permutation nulls that refit the complete NDim consumer inside every null draw;
+fold-matched null diagnostics; foldwise fibre/coefficient stability; and a
+structural null that preserves each region's weighted in/out strength and
+source-level signed tendency while scrambling pair-specific wiring.
 """
 
 from __future__ import annotations
@@ -20,6 +23,10 @@ from pathlib import Path
 
 import numpy as np
 
+from dashi.analysis.ndim_stability_nulls import (
+    strength_preserving_structural_null_loro,
+    summarize_loro_fibre_stability,
+)
 from dashi.analysis.ndim_structure_function import (
     build_ndim_structural_fibres,
     evaluate_leave_one_region_out,
@@ -117,6 +124,7 @@ def main() -> None:
         functional.matrix,
         correlation_threshold=args.correlation_threshold,
     )
+    stability = summarize_loro_fibre_stability(blocked)
     pair_null = region_label_permutation_null_pair_holdout(
         family,
         functional.matrix,
@@ -131,6 +139,13 @@ def main() -> None:
         functional.matrix,
         n_null=args.null_count,
         seed=20260912,
+        correlation_threshold=args.correlation_threshold,
+    )
+    strength_null = strength_preserving_structural_null_loro(
+        structural_common,
+        functional.matrix,
+        n_null=args.null_count,
+        seed=20260913,
         correlation_threshold=args.correlation_threshold,
     )
 
@@ -198,6 +213,31 @@ def main() -> None:
             "null_mean_residual": float(np.mean(blocked_null.null_residuals)),
             "null_min_residual": float(np.min(blocked_null.null_residuals)),
             "fold_matched_nulls": fold_null_by_region,
+            "strength_preserving_wiring_null": {
+                "description": "pair-specific wiring scrambled while weighted in/out strength and source-level signed tendency are retained; NDim fibres and every LORO fit are recomputed per draw",
+                "empirical_p_value": strength_null.empirical_p_value,
+                "null_mean_residual": strength_null.null_mean_residual,
+                "null_min_residual": strength_null.null_min_residual,
+                "max_row_strength_error": strength_null.max_row_strength_error,
+                "max_column_strength_error": strength_null.max_column_strength_error,
+            },
+            "fibre_stability": {
+                "fold_count": stability.fold_count,
+                "intercept_mean": stability.intercept_mean,
+                "intercept_std": stability.intercept_std,
+                "fibres": [
+                    {
+                        "fibre": s.fibre,
+                        "selected_fold_count": s.selected_fold_count,
+                        "selected_fold_fraction": s.selected_fold_fraction,
+                        "coefficient_mean_when_selected": s.coefficient_mean_when_selected,
+                        "coefficient_std_when_selected": s.coefficient_std_when_selected,
+                        "coefficient_min_when_selected": s.coefficient_min_when_selected,
+                        "coefficient_max_when_selected": s.coefficient_max_when_selected,
+                    }
+                    for s in stability.fibres
+                ],
+            },
             "folds": [
                 {
                     "held_out_region": f.held_out_region,
@@ -215,12 +255,15 @@ def main() -> None:
             "loro_permutation_p_below_0_10_implies_confirmed_structure_function_coupling": False,
             "foldwise_nominal_p_values_are_multiplicity_corrected": False,
             "single_animal_region_level_result_implies_population_generalization": False,
+            "strength_preserving_null_preserves_pair_specific_wiring": False,
         },
         "firewalls": {
             "compatibility_selection_uses_functional_outcomes": False,
             "pair_fit_uses_held_out_outcomes": False,
             "leave_one_region_out_fit_contains_held_region_pairs": False,
             "permutation_null_reuses_frozen_observed_coefficients": False,
+            "strength_null_reuses_observed_pairwise_wiring": False,
+            "strength_null_reuses_frozen_observed_coefficients": False,
             "shared_region_identity_is_neuron_identity": False,
             "more_fibres_implies_better_prediction": False,
             "pair_holdout_is_equivalent_to_region_holdout": False,
