@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Register FDA to JRC2018Unisex and transform the surviving selected labels.
+"""Register FDA to the VFB JRC2018Unisex grid and transform selected labels.
 
-Run inside the pinned BIFROST container.  The JRC2018 source template is an NRRD
-whose axis spacings are expressed in microns.  We stage it as a NIfTI explicitly
-marked as micron units before calling BIFROST, preventing ITK from interpreting
-0.38 as millimetres.
+Run inside the pinned BIFROST container.  The fixed image is the VFB-native
+JRC2018Unisex NRRD used by the 46 painted-domain volumes, so the transformed
+selected labels and all painted domains share one exact raster grid.
+
+The VFB NRRD stores physical coordinates in microns.  We preserve its full
+``space directions`` and ``space origin`` when staging a NIfTI explicitly marked
+as micron units before calling BIFROST, preventing ITK unit reinterpretation.
 """
 
 from __future__ import annotations
@@ -16,6 +19,8 @@ import shutil
 import subprocess
 
 import numpy as np
+
+VFB_JRC_SHAPE = (1210, 566, 174)
 
 
 def _run(cmd: list[str]) -> None:
@@ -40,7 +45,12 @@ def main() -> None:
     parser.add_argument("--jrc-template-nrrd", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--bifrost-bin", default="bifrost")
-    parser.add_argument("--downsample-to", type=float, default=2.0, help="isotropic registration resolution in microns")
+    parser.add_argument(
+        "--downsample-to",
+        type=float,
+        default=2.0,
+        help="isotropic registration resolution in microns",
+    )
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
@@ -53,23 +63,43 @@ def main() -> None:
 
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
-    jrc_nifti = out / "JRC2018Unisex_micron_calibrated.nii"
-    registration_dir = out / "fda_to_jrc2018unisex"
-    selected_jrc = out / "selected_labels_jrc2018unisex.nii"
+    jrc_nifti = out / "VFB_JRC2018Unisex_micron_calibrated.nii"
+    registration_dir = out / "fda_to_vfb_jrc2018unisex"
+    selected_jrc = out / "selected_labels_vfb_jrc2018unisex.nii"
 
     jrc_data, jrc_header = nrrd.read(args.jrc_template_nrrd)
     jrc_data = np.asarray(jrc_data)
-    if jrc_data.shape != (1652, 773, 456):
-        raise SystemExit(f"unexpected JRC2018Unisex template shape: {jrc_data.shape}")
+    if jrc_data.shape != VFB_JRC_SHAPE:
+        raise SystemExit(
+            f"unexpected VFB JRC2018Unisex template shape: {jrc_data.shape}; "
+            f"expected {VFB_JRC_SHAPE}"
+        )
+
     directions = np.asarray(jrc_header.get("space directions"), dtype=float)
-    if directions.shape != (3, 3):
-        raise SystemExit("JRC2018Unisex NRRD lacks 3x3 space directions")
+    if directions.shape != (3, 3) or not np.all(np.isfinite(directions)):
+        raise SystemExit("VFB JRC2018Unisex NRRD lacks finite 3x3 space directions")
     zooms = np.linalg.norm(directions, axis=1)
-    if not np.allclose(zooms, (0.38, 0.38, 0.38), atol=1e-9, rtol=1e-9):
-        raise SystemExit(f"unexpected JRC2018Unisex voxel spacing: {zooms}")
+    if np.any(zooms <= 0):
+        raise SystemExit(f"invalid VFB JRC2018Unisex voxel spacing: {zooms}")
+
+    origin_raw = jrc_header.get("space origin")
+    if origin_raw is None:
+        raise SystemExit("VFB JRC2018Unisex NRRD lacks space origin")
+    origin = np.asarray(origin_raw, dtype=float)
+    if origin.shape != (3,) or not np.all(np.isfinite(origin)):
+        raise SystemExit(f"invalid VFB JRC2018Unisex space origin: {origin_raw!r}")
+
+    # VFB viewer raster should cover an adult fly brain, not a millimetre-scale
+    # or metre-scale object.  This catches another hidden unit mismatch early.
+    extents_um = np.asarray(VFB_JRC_SHAPE, dtype=float) * zooms
+    if np.any(extents_um < 100.0) or np.any(extents_um > 1000.0):
+        raise SystemExit(
+            f"implausible VFB JRC2018Unisex physical extents in microns: {extents_um}"
+        )
 
     affine = np.eye(4, dtype=float)
     affine[:3, :3] = directions.T
+    affine[:3, 3] = origin
     header = nib.Nifti1Header()
     header.set_data_dtype(jrc_data.dtype)
     header.set_xyzt_units("micron", "unknown")
@@ -92,20 +122,26 @@ def main() -> None:
         register_cmd.append("--force")
     _run(register_cmd)
 
-    _run([
-        bifrost,
-        "transform",
-        str(registration_dir.resolve()),
-        str(Path(args.selected_labels_fda).resolve()),
-        "--label_image",
-        "--result_name",
-        str(selected_jrc.resolve()),
-        "-v",
-    ])
+    _run(
+        [
+            bifrost,
+            "transform",
+            str(registration_dir.resolve()),
+            str(Path(args.selected_labels_fda).resolve()),
+            "--label_image",
+            "--result_name",
+            str(selected_jrc.resolve()),
+            "-v",
+        ]
+    )
 
     selected_rows = np.load(args.selected_rows).astype(np.int64, copy=False)
     img = nib.load(selected_jrc)
     data = np.asarray(img.dataobj)
+    if data.shape != VFB_JRC_SHAPE:
+        raise SystemExit(
+            f"transformed selected labels landed on {data.shape}, expected VFB grid {VFB_JRC_SHAPE}"
+        )
     observed = {int(v) for v in np.unique(data) if int(v) != 0}
     allowed = {int(row) + 1 for row in selected_rows}
     unexpected = sorted(observed - allowed)
@@ -116,6 +152,10 @@ def main() -> None:
     summary = {
         "moving_template": str(Path(args.fda_template)),
         "fixed_template": str(Path(args.jrc_template_nrrd)),
+        "fixed_template_vfb_id": "VFB_00101567",
+        "fixed_grid_shape": list(VFB_JRC_SHAPE),
+        "fixed_voxel_spacing_microns": [float(v) for v in zooms],
+        "fixed_space_origin_microns": [float(v) for v in origin],
         "jrc_staged_nifti": str(jrc_nifti),
         "downsample_microns": args.downsample_to,
         "downsample_itk_mm": downsample_mm,
@@ -125,9 +165,14 @@ def main() -> None:
         "registration_dir": str(registration_dir),
         "transform_h5": str(registration_dir / "transform.h5"),
         "selected_labels_jrc2018unisex": str(selected_jrc),
-        "identity_semantics": "FDA-space exact selected labels transformed by BIFROST into JRC2018Unisex; not neuron identity",
+        "identity_semantics": (
+            "FDA-space exact selected labels transformed by BIFROST onto the exact "
+            "VFB JRC2018Unisex painted-domain grid; not neuron identity"
+        ),
     }
-    (out / "gauthey_fda_to_jrc2018.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    (out / "gauthey_fda_to_jrc2018.json").write_text(
+        json.dumps(summary, indent=2), encoding="utf-8"
+    )
     print(json.dumps(summary, indent=2))
 
 
