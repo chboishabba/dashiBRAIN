@@ -42,8 +42,8 @@ def canonicalize_malecns_neuropil(label: object) -> str:
 @dataclass(frozen=True)
 class NeuropilMembership:
     regions: tuple[str, ...]
-    membership: sp.csr_matrix  # region x neuron; columns sum to 1 when observed
-    observed_synapse_incidence: np.ndarray
+    membership: sp.csr_matrix  # region x neuron; retained mass may be < 1
+    observed_synapse_incidence: np.ndarray  # total graph incidence, all neuropils
     source_rows: int
 
     @property
@@ -111,11 +111,15 @@ def load_synapse_neuropil_membership(
 ) -> NeuropilMembership:
     """Build bounded fractional region x neuron membership from real synapses.
 
-    Only the requested functional-region vocabulary is accumulated. Each
-    retained partner row contributes one incidence to both participating
-    neurons in the row's ``primary_post`` neuropil. Counts are accumulated
-    batchwise into a bounded ``regions x neurons`` matrix and normalized per
-    neuron afterwards. No individual synapse row survives the batch boundary.
+    Numerators count a neuron's synaptic incidence in each requested neuropil.
+    The denominator counts that neuron's total incidence across *all* MaleCNS
+    primary neuropils. Therefore retained membership mass may be below one when
+    much of a neuron lies outside the functional vocabulary. This avoids
+    conditioning away unobserved anatomy.
+
+    Processing is batchwise: no individual synapse row survives the batch
+    boundary, and the persistent count carrier is bounded by
+    ``len(allowed_regions) x len(node_ids)`` rather than total synapse rows.
     """
     p = Path(path)
     if not p.is_file():
@@ -145,18 +149,33 @@ def load_synapse_neuropil_membership(
     n_regions = len(requested)
     n_nodes = len(node_ids)
     counts = np.zeros((n_regions, n_nodes), dtype=np.int64)
+    total_incidence = np.zeros(n_nodes, dtype=np.int64)
     source_rows = 0
 
     for pre_arr, post_arr, roi_arr in _iter_feather_batches(p, (pre_col, post_col, roi_col)):
         source_rows += len(roi_arr)
+        pres_all = pre_arr.to_numpy(zero_copy_only=False)
+        posts_all = post_arr.to_numpy(zero_copy_only=False)
 
-        # MaleCNS/neuPrint names bilateral ROIs like AL(L), AMMC(R), etc. The
-        # functional carrier is bilateral at the present resolution, so only
-        # this explicit laterality suffix is collapsed.
-        roi_base = pc.replace_substring_regex(
-            pc.cast(roi_arr, pa.string()),
-            pattern=r"\((?:L|R|M)\)$",
-            replacement="",
+        # Denominator: all graph-participating synaptic incidences, independent
+        # of whether the functional experiment measures that neuropil.
+        pre_i_all, pre_valid_all = _located_indices(graph_ids, pres_all)
+        post_i_all, post_valid_all = _located_indices(graph_ids, posts_all)
+        if np.any(pre_valid_all):
+            np.add.at(total_incidence, pre_i_all[pre_valid_all], 1)
+        if np.any(post_valid_all):
+            np.add.at(total_incidence, post_i_all[post_valid_all], 1)
+
+        # Numerator: only explicitly shared functional neuropils. MaleCNS /
+        # neuPrint names bilateral ROIs like AL(L), AMMC(R); the current
+        # functional carrier is bilateral, so collapse only that suffix.
+        roi_base = pc.fill_null(
+            pc.replace_substring_regex(
+                pc.cast(roi_arr, pa.string()),
+                pattern=r"\((?:L|R|M)\)$",
+                replacement="",
+            ),
+            "",
         )
         roi_index = pc.index_in(roi_base, value_set=requested_array).to_numpy(
             zero_copy_only=False
@@ -166,9 +185,8 @@ def load_synapse_neuropil_membership(
             continue
 
         region_i = roi_index[keep].astype(np.int64, copy=False)
-        pres = pre_arr.to_numpy(zero_copy_only=False)[keep]
-        posts = post_arr.to_numpy(zero_copy_only=False)[keep]
-
+        pres = pres_all[keep]
+        posts = posts_all[keep]
         pre_i, pre_valid = _located_indices(graph_ids, pres)
         post_i, post_valid = _located_indices(graph_ids, posts)
 
@@ -184,7 +202,7 @@ def load_synapse_neuropil_membership(
 
     counts = counts[keep_regions]
     regions = tuple(r for r, keep in zip(requested, keep_regions) if keep)
-    incidence = counts.sum(axis=0).astype(np.float64, copy=False)
+    incidence = total_incidence.astype(np.float64, copy=False)
 
     membership_dense = counts.astype(np.float32)
     observed = incidence > 0
