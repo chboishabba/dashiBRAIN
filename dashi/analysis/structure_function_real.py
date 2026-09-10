@@ -63,6 +63,47 @@ def row_normalize(matrix: sp.spmatrix) -> sp.csr_matrix:
     return sp.diags(inv) @ m
 
 
+def aggregate_connectome_by_membership(
+    adjacency: sp.spmatrix,
+    membership: sp.spmatrix,
+    regions: Sequence[str],
+    *,
+    signed_adjacency: sp.spmatrix | None = None,
+) -> RegionStructuralFeatures:
+    """Aggregate neuron adjacency through a sparse region-membership operator.
+
+    ``membership`` is region x neuron.  It may be one-hot or fractional.  The
+    latter is required for central-brain neurons whose synapses occupy multiple
+    neuropils; forcing those neurons to one label would discard real anatomy.
+    """
+    m = membership.tocsr().astype(float)
+    if m.shape[1] != adjacency.shape[0]:
+        raise ValueError("membership columns must align with adjacency rows")
+    if m.shape[0] != len(regions):
+        raise ValueError("regions must align with membership rows")
+    if adjacency.shape[0] != adjacency.shape[1]:
+        raise ValueError("adjacency must be square")
+
+    region_sizes = np.asarray(m.sum(axis=1)).ravel()
+    if np.any(region_sizes <= 0):
+        raise ValueError("every retained region must have positive membership mass")
+    denom = np.outer(region_sizes, region_sizes)
+    denom[denom == 0] = 1.0
+
+    direct_sparse = m @ adjacency.tocsr() @ m.T
+    direct = np.asarray(direct_sparse.toarray(), dtype=float) / denom
+
+    norm = row_normalize(sp.csr_matrix(direct))
+    two_hop = np.asarray((norm @ norm).toarray(), dtype=float)
+
+    signed_direct = None
+    if signed_adjacency is not None:
+        s = m @ signed_adjacency.tocsr() @ m.T
+        signed_direct = np.asarray(s.toarray(), dtype=float) / denom
+
+    return RegionStructuralFeatures(tuple(str(r) for r in regions), direct, two_hop, signed_direct)
+
+
 def aggregate_connectome_by_region(
     adjacency: sp.spmatrix,
     node_regions: Sequence[str],
@@ -91,23 +132,12 @@ def aggregate_connectome_by_region(
             cols.append(node_i)
             vals.append(1.0)
     membership = sp.csr_matrix((vals, (rows, cols)), shape=(len(regions), adjacency.shape[0]))
-
-    direct_sparse = membership @ adjacency.tocsr() @ membership.T
-    direct = np.asarray(direct_sparse.toarray(), dtype=float)
-    region_sizes = np.asarray(membership.sum(axis=1)).ravel()
-    denom = np.outer(region_sizes, region_sizes)
-    denom[denom == 0] = 1.0
-    direct = direct / denom
-
-    norm = row_normalize(sp.csr_matrix(direct))
-    two_hop = np.asarray((norm @ norm).toarray(), dtype=float)
-
-    signed_direct = None
-    if signed_adjacency is not None:
-        s = membership @ signed_adjacency.tocsr() @ membership.T
-        signed_direct = np.asarray(s.toarray(), dtype=float) / denom
-
-    return RegionStructuralFeatures(regions, direct, two_hop, signed_direct)
+    return aggregate_connectome_by_membership(
+        adjacency,
+        membership,
+        regions,
+        signed_adjacency=signed_adjacency,
+    )
 
 
 def functional_correlation(traces: np.ndarray, unit_ids: Sequence[str]) -> FunctionalAssociation:
