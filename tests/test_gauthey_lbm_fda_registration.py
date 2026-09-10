@@ -8,6 +8,8 @@ from dashi.analysis.gauthey_lbm_experiment import (
 )
 from dashi.analysis.gauthey_lbm_fda_registration import (
     aggregate_transformed_selected_labels_to_regions,
+    centered_lbm_affine_in_fda_axes,
+    physical_extent_microns,
     reorder_native_labels_to_nifti_shape,
 )
 
@@ -26,6 +28,42 @@ def test_native_label_volume_reorders_to_mean_brain_shape_without_resampling():
     assert permutation == (2, 1, 0)
     assert reordered.shape == (5, 3, 27)
     assert reordered[4, 2, 26] == labels[26, 2, 4]
+
+
+def test_centered_lbm_affine_swaps_array_yx_into_fda_world_xy():
+    # Synthetic FDA affine uses micron units and simple signed axis directions.
+    fixed_shape = (1652, 768, 479)
+    fixed_affine = np.array(
+        [
+            [-0.38, 0.0, 0.0, 10.0],
+            [0.0, -0.38, 0.0, 20.0],
+            [0.0, 0.0, 0.38, 30.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ],
+        dtype=float,
+    )
+    moving_shape = (226, 512, 27)  # Gauthey array order is y,x,z.
+    moving_affine = centered_lbm_affine_in_fda_axes(
+        moving_shape,
+        fixed_shape,
+        fixed_affine,
+    )
+
+    # Moving voxel axis 0 follows FDA world-Y; voxel axis 1 follows FDA world-X.
+    assert np.allclose(moving_affine[:3, 0], [0.0, -1.3, 0.0])
+    assert np.allclose(moving_affine[:3, 1], [-1.3, 0.0, 0.0])
+    assert np.allclose(moving_affine[:3, 2], [0.0, 0.0, 9.0])
+
+    fixed_center_idx = (np.asarray(fixed_shape, dtype=float) - 1.0) / 2.0
+    moving_center_idx = (np.asarray(moving_shape, dtype=float) - 1.0) / 2.0
+    fixed_center = fixed_affine[:3, :3] @ fixed_center_idx + fixed_affine[:3, 3]
+    moving_center = moving_affine[:3, :3] @ moving_center_idx + moving_affine[:3, 3]
+    assert np.allclose(moving_center, fixed_center)
+
+    extent = physical_extent_microns(moving_shape, moving_affine)
+    assert np.allclose(extent, [226 * 1.3, 512 * 1.3, 27 * 9.0])
+    # Anatomically, x comes from moving array axis 1 and y from array axis 0.
+    assert np.allclose([extent[1], extent[0], extent[2]], [665.6, 293.8, 243.0])
 
 
 def test_fda_transformed_labels_aggregate_to_time_by_region():
