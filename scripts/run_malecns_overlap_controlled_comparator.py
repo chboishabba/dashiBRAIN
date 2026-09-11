@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test MaleCNS structure/function coupling after removing soft-atlas overlap covariance."""
+"""Test MaleCNS coupling after controlling functional-carrier nuisances."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
+from dashi.analysis.gauthey_lbm_experiment import published_lbm_stimulus_regressor
 from dashi.analysis.ndim_structure_function import (
     build_ndim_structural_fibres,
     evaluate_leave_one_region_out,
@@ -21,6 +22,9 @@ from dashi.analysis.overlap_controlled_structure_function import (
     load_overlap_membership_csv,
     overlap_controlled_label_permutation_null_loro,
     restrict_overlap_kernel,
+)
+from dashi.analysis.stimulus_controlled_functional import (
+    residualize_region_traces_against_stimulus,
 )
 from dashi.analysis.structure_function_real import (
     RegionStructuralFeatures,
@@ -42,6 +46,12 @@ def main() -> None:
     p.add_argument("--region-functional-atlas", required=True)
     p.add_argument("--region-functional-source", required=True)
     p.add_argument("--synapse-partners", required=True)
+    p.add_argument(
+        "--stimulus-control",
+        choices=("none", "published-gauthey"),
+        default="none",
+        help="optionally regress the published exogenous audio regressor from each region trace before forming functional correlation",
+    )
     p.add_argument("--correlation-threshold", type=float, default=0.98)
     p.add_argument("--null-count", type=int, default=100)
     p.add_argument("--output", required=True)
@@ -91,11 +101,46 @@ def main() -> None:
         structural.two_hop[np.ix_(si, si)],
         structural.signed_direct[np.ix_(si, si)] if structural.signed_direct is not None else None,
     )
-    functional = functional_correlation(producer.traces.traces[:, fi], common)
+
+    common_traces = np.asarray(producer.traces.traces[:, fi], dtype=float)
+    functional_raw = functional_correlation(common_traces, common)
+    stimulus_summary: dict[str, object] = {
+        "mode": args.stimulus_control,
+        "applied": False,
+        "uses_structural_features": False,
+        "uses_region_pair_outcomes": False,
+    }
+    analysis_traces = common_traces
+    if args.stimulus_control == "published-gauthey":
+        stimulus = published_lbm_stimulus_regressor(common_traces.shape[0])
+        stim_fit = residualize_region_traces_against_stimulus(common_traces, stimulus)
+        analysis_traces = stim_fit.residual_traces
+        stimulus_summary.update(
+            {
+                "applied": True,
+                "regressor": "published Gauthey binary audio blocks convolved with source GCaMP6f kernel",
+                "fit": "intercept + stimulus coefficient independently per region over time",
+                "coefficient_mean": float(np.mean(stim_fit.coefficients)),
+                "coefficient_std": float(np.std(stim_fit.coefficients)),
+                "coefficient_min": float(np.min(stim_fit.coefficients)),
+                "coefficient_max": float(np.max(stim_fit.coefficients)),
+                "variance_fraction_removed_mean": float(np.mean(stim_fit.variance_fraction_removed)),
+                "variance_fraction_removed_median": float(np.median(stim_fit.variance_fraction_removed)),
+                "variance_fraction_removed_min": float(np.min(stim_fit.variance_fraction_removed)),
+                "variance_fraction_removed_max": float(np.max(stim_fit.variance_fraction_removed)),
+            }
+        )
+
+    functional = functional_correlation(analysis_traces, common)
     overlap_kernel = restrict_overlap_kernel(functional_membership, common)
     family = build_ndim_structural_fibres(structural_common)
 
-    raw = evaluate_leave_one_region_out(
+    raw_pre_stimulus = evaluate_leave_one_region_out(
+        family,
+        functional_raw.matrix,
+        correlation_threshold=args.correlation_threshold,
+    )
+    raw_analysis_target = evaluate_leave_one_region_out(
         family,
         functional.matrix,
         correlation_threshold=args.correlation_threshold,
@@ -106,7 +151,7 @@ def main() -> None:
         overlap_kernel,
         correlation_threshold=args.correlation_threshold,
     )
-    real_label, label_nulls, label_p = overlap_controlled_label_permutation_null_loro(
+    _real_label, label_nulls, label_p = overlap_controlled_label_permutation_null_loro(
         family,
         functional.matrix,
         overlap_kernel,
@@ -132,13 +177,18 @@ def main() -> None:
             "source_identifier": args.region_functional_source,
             "membership_source": args.functional_membership,
         },
+        "stimulus_nuisance": stimulus_summary,
         "overlap_nuisance": {
             "kernel": "cosine similarity of ROI->painted-domain membership rows",
             "fit": "intercept + one overlap coefficient, fit independently on training pairs inside each fold",
             "held_out_pairs_used_for_nuisance_fit": False,
         },
         "raw_soft_loro": {
-            "weighted_mean_residual": raw.weighted_mean_residual,
+            "weighted_mean_residual": raw_pre_stimulus.weighted_mean_residual,
+        },
+        "analysis_target_loro_before_overlap_control": {
+            "weighted_mean_residual": raw_analysis_target.weighted_mean_residual,
+            "target": "raw soft correlation" if args.stimulus_control == "none" else "published-stimulus-residualized soft correlation",
         },
         "overlap_controlled_loro": {
             "weighted_mean_residual": controlled.weighted_mean_residual,
@@ -165,6 +215,8 @@ def main() -> None:
         },
         "firewalls": {
             "atlas_overlap_kernel_is_structural_connectome_feature": False,
+            "stimulus_regressor_is_structural_connectome_feature": False,
+            "stimulus_residualization_uses_region_pair_outcomes": False,
             "nuisance_fit_uses_held_out_functional_pairs": False,
             "label_null_permuted_function_without_overlap_geometry": False,
             "strength_null_scrambles_functional_overlap_geometry": False,
