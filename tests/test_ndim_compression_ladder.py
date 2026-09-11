@@ -3,6 +3,7 @@ import numpy as np
 from dashi.analysis.ndim_compression_ladder import (
     choose_smallest_inner_adequate_subset,
     evaluate_nested_fibre_compression,
+    evaluate_nested_fibre_compression_overlap_controlled,
 )
 from dashi.analysis.ndim_structure_function import StructuralFibreFamily
 
@@ -64,3 +65,37 @@ def test_nested_compression_reports_smaller_transferable_carrier():
     assert result.mean_selected_size == 1.0
     assert result.selection_frequency == {"signal": len(family.regions)}
     assert result.weighted_mean_residual < 1e-10
+
+
+def test_overlap_controlled_nested_selection_does_not_see_outer_region():
+    family, signal_only = _synthetic_family()
+    n = len(family.regions)
+    ii, jj = np.indices((n, n))
+    overlap_kernel = np.exp(-np.abs(ii - jj) / 2.0)
+    observed = signal_only + 0.6 * overlap_kernel
+    np.fill_diagonal(observed, 1.0)
+
+    baseline = evaluate_nested_fibre_compression_overlap_controlled(
+        family,
+        observed,
+        overlap_kernel,
+        tolerance=1e-8,
+    )
+
+    held = 0
+    changed = observed.copy()
+    changed[held, 1:] += 10.0
+    changed[1:, held] += 10.0
+    perturbed = evaluate_nested_fibre_compression_overlap_controlled(
+        family,
+        changed,
+        overlap_kernel,
+        tolerance=1e-8,
+    )
+
+    a = baseline.folds[held]
+    b = perturbed.folds[held]
+    assert b.selected_fibres == a.selected_fibres
+    assert np.isclose(b.inner_full_residual, a.inner_full_residual)
+    assert np.isclose(b.inner_selected_residual, a.inner_selected_residual)
+    assert not np.isclose(b.outer_residual, a.outer_residual)
