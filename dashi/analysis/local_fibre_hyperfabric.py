@@ -140,6 +140,12 @@ class LocalFibreHyperfabric:
         crossing = Crossing(locality, tuple(f.name for f in additions_t), crossing_kind)
         return replace(self, fibres=updated, crossings=self.crossings + (crossing,))
 
+    def with_incidence(self, incidence: Incidence) -> "LocalFibreHyperfabric":
+        known = set(self.fibres)
+        if incidence.left not in known or incidence.right not in known:
+            raise KeyError("incidence endpoints must be known base localities")
+        return replace(self, incidences=self.incidences + (incidence,))
+
     def with_pants_patch(self, patch: PantsPatch) -> "LocalFibreHyperfabric":
         if not patch.is_gluable:
             raise ValueError("pants patch lacks a complete matching seam receipt")
@@ -218,6 +224,38 @@ def hyperfabric_from_structural_family(
             )
 
     return LocalFibreHyperfabric(regions=regions, fibres=fibres)
+
+
+def add_pair_composition_incidences(
+    fabric: LocalFibreHyperfabric,
+    *,
+    include_self_pairs: bool = False,
+) -> LocalFibreHyperfabric:
+    """Add base incidences for composable ordered region pairs.
+
+    ``(i,j) -> (j,k)`` records path composition in the base.  It does not assert
+    that any fibre automatically transports across the seam, nor that a two-hop
+    feature is a primitive fibre.  Those are separate consumer/domain choices.
+    """
+    out = fabric
+    for i in fabric.regions:
+        for j in fabric.regions:
+            if not include_self_pairs and i == j:
+                continue
+            left = BaseLocality(i, j)
+            for k in fabric.regions:
+                if not include_self_pairs and j == k:
+                    continue
+                right = BaseLocality(j, k)
+                out = out.with_incidence(
+                    Incidence(
+                        left,
+                        right,
+                        relation="pair-composition",
+                        provenance="target(left)=source(right); transport/gluing still requires its own receipt",
+                    )
+                )
+    return out
 
 
 def chart_round_trip_exact(
