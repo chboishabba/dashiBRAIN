@@ -7,6 +7,7 @@ from dashi.analysis.local_fibre_hyperfabric import (
     PantsPatch,
     Seam,
     SymmetryAction,
+    add_pair_composition_incidences,
     chart_round_trip_exact,
     hyperfabric_from_structural_family,
 )
@@ -56,6 +57,14 @@ def test_refinement_rejects_duplicate_local_coordinate_name():
         fabric.refine_at_crossing(
             loc, (LocalFibreCoordinate("direct_forward", 99.0, "bad"),)
         )
+
+
+def test_pair_composition_is_base_incidence_not_automatic_fibre_transport():
+    fabric = add_pair_composition_incidences(hyperfabric_from_structural_family(_family()))
+    assert len(fabric.incidences) == 2
+    assert all(edge.relation == "pair-composition" for edge in fabric.incidences)
+    assert fabric.pants_patches == ()
+    assert fabric.crossings == ()
 
 
 def test_pants_gluing_requires_interface_receipt_and_does_not_delete_local_fibres():
