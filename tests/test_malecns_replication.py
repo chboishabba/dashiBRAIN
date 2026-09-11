@@ -34,8 +34,8 @@ def _carrier():
 
 
 def _producer(source: str):
-    # Long enough to use the published regressor while keeping the fixture simple.
-    t = np.arange(120, dtype=float)
+    # Span the published block regressor; a very short fixture would be all pre-stimulus.
+    t = np.arange(800, dtype=float)
     traces = np.column_stack(
         [
             np.sin(t / 11.0),
