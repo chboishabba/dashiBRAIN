@@ -81,7 +81,7 @@ def test_observed_selected_support_counts_labels_and_uses_physical_nifti_units(t
 
     support, voxel_volume_um3 = _observed_selected_support(path)
     assert support == {4: 2, 21: 1}
-    assert voxel_volume_um3 == 8.0
+    assert np.isclose(voxel_volume_um3, 8.0)
 
 
 def test_observed_selected_support_converts_mm_affine_volume_to_um3(tmp_path):
