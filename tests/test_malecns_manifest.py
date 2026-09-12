@@ -39,11 +39,12 @@ def test_manifest_provenance_graph_relations():
     manifest = MaleCNSManifest()
     graph = manifest.build_provenance_graph()
 
-    # Same animal + trial = SAME_TRIAL_CORROBORATION
+    # Shared dataset root alone must NOT be promoted to same-trial corroboration
+    # once the functional artifact lost its fabricated animal/trial provenance.
     rel_trial = classify_evidence_relation(
         graph, "functional_trial_calcium", "behaviour_fictrac_kinematics"
     )
-    assert rel_trial == EvidenceRelation.SAME_TRIAL_CORROBORATION
+    assert rel_trial == EvidenceRelation.INDEPENDENCE_UNDETERMINED
 
     # Distinct animals/datasets = CROSS_ANIMAL_REPLICATION
     rel_dataset = classify_evidence_relation(
