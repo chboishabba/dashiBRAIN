@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import csv
+import json
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
@@ -45,6 +46,15 @@ class LBMIdentityCoverage:
 class LBMIdentityAccumulator:
     identities: tuple[LBMExactIdentity, ...]
     coverage: LBMIdentityCoverage
+
+
+@dataclass(frozen=True)
+class LBMTrialIdentityCheckpoint:
+    trial_id: str
+    identity_path: Path
+    summary_path: Path
+    exact_source_identities_recovered: int
+    remote_archive_accessed: bool
 
 
 def _validate_identity(identity: LBMExactIdentity) -> None:
@@ -159,3 +169,61 @@ def write_identity_csv(accumulator: LBMIdentityAccumulator, path: str | Path) ->
                 identity.cluster_index,
                 f"{identity.correlation:.17g}",
             ])
+
+
+def checkpoint_trial_identity_receipt(
+    identities: Sequence[LBMExactIdentity],
+    *,
+    trial_id: str,
+    output_dir: str | Path,
+    remote_archive_accessed: bool,
+) -> LBMTrialIdentityCheckpoint:
+    """Persist one searched trial immediately so its source archive may be released.
+
+    This receipt is intentionally standalone and append-only.  It records only
+    exact identities from one searched trial and does not infer anything about
+    unsearched or source-missing trials.
+    """
+    if trial_id not in LBM_TRIALS:
+        raise ValueError(f"unknown LBM trial_id: {trial_id}")
+    for identity in identities:
+        _validate_identity(identity)
+        if identity.trial_id != trial_id:
+            raise ValueError(
+                "checkpoint contains identity from a different trial: "
+                f"expected={trial_id}, got={identity.trial_id}"
+            )
+
+    accumulator = merge_exact_identities(
+        [identities],
+        searched_trials=(trial_id,),
+    )
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    stem = trial_id.replace("/", "_")
+    identity_path = out / f"gauthey_lbm_selected_identities_{stem}.csv"
+    summary_path = out / f"gauthey_lbm_identity_receipt_{stem}.json"
+    write_identity_csv(accumulator, identity_path)
+    payload = {
+        "status": "gauthey_lbm_single_trial_exact_identity_receipt",
+        "trial_id": trial_id,
+        "standalone_trial_receipt": True,
+        "searched_trial": True,
+        "exact_source_identities_recovered": len(accumulator.identities),
+        "remote_archive_accessed": bool(remote_archive_accessed),
+        "identity_output": str(identity_path),
+        "identity_semantics": "exact trace equality to deposited selected row; not neuron identity",
+        "firewalls": {
+            "zero_matches_imply_zero_biological_contribution": False,
+            "trial_receipt_implies_replication": False,
+            "trial_receipt_implies_atlas_registration": False,
+        },
+    }
+    summary_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return LBMTrialIdentityCheckpoint(
+        trial_id=trial_id,
+        identity_path=identity_path,
+        summary_path=summary_path,
+        exact_source_identities_recovered=len(accumulator.identities),
+        remote_archive_accessed=bool(remote_archive_accessed),
+    )
