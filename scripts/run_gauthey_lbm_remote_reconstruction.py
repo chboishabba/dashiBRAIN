@@ -40,6 +40,10 @@ from dashi.analysis.gauthey_lbm_experiment import (
     pooled_lbm_row_to_trial_plane_cluster,
     published_lbm_stimulus_regressor,
 )
+from dashi.io.gauthey_lbm_identity_receipts import (
+    LBMExactIdentity,
+    checkpoint_trial_identity_receipt,
+)
 from dashi.io.out_of_core_numpy_pickle import load_numpy_pickle_out_of_core
 from dashi.io.remote_zip import list_remote_zip, stream_remote_member_to_file
 
@@ -171,6 +175,27 @@ def _match_candidates_to_deposited(
     return matches
 
 
+def _trial_exact_identities(
+    trial_matches: list[tuple[int, int, float]],
+) -> tuple[LBMExactIdentity, ...]:
+    identities: list[LBMExactIdentity] = []
+    for selected_row, pooled_source_row, correlation in sorted(trial_matches):
+        trial_id, plane_index, cluster_index = pooled_lbm_row_to_trial_plane_cluster(
+            pooled_source_row
+        )
+        identities.append(
+            LBMExactIdentity(
+                selected_row=selected_row,
+                pooled_source_row=pooled_source_row,
+                trial_id=trial_id,
+                plane_index=plane_index,
+                cluster_index=cluster_index,
+                correlation=correlation,
+            )
+        )
+    return tuple(identities)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -217,6 +242,7 @@ def main() -> None:
     spill_dir.mkdir(parents=True, exist_ok=True)
     output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=True)
+    trial_receipt_dir = output / "trial_receipts"
 
     requested = set(args.trial or LBM_TRIALS)
     stimulus = published_lbm_stimulus_regressor()
@@ -266,12 +292,20 @@ def main() -> None:
             correlation_block_rows=args.correlation_block_rows,
         )
         trial_matches = _match_candidates_to_deposited(deposited, rows, corrs, traces)
+        trial_identities = _trial_exact_identities(trial_matches)
+        checkpoint = checkpoint_trial_identity_receipt(
+            trial_identities,
+            trial_id=trial_id,
+            output_dir=trial_receipt_dir,
+            remote_archive_accessed=(local_source_zip is None),
+        )
         recovered.extend(trial_matches)
         processed_trials.append(trial_id)
         print(
             f"  local candidates={len(rows)}; exact deposited matches={len(trial_matches)}; "
             f"corr=[{float(corrs[0]):.6g}, {float(corrs[-1]):.6g}]"
         )
+        print(f"  durable trial receipt: {checkpoint.summary_path}")
         gc.collect()
 
     by_deposited: dict[int, list[tuple[int, float]]] = {}
@@ -315,6 +349,8 @@ def main() -> None:
         "complete_identity_recovery": len(unresolved_rows) == 0,
         "identity_output": str(identity_path),
         "unresolved_output": str(unresolved_path),
+        "trial_receipt_dir": str(trial_receipt_dir),
+        "per_trial_checkpointing": True,
         "source_containers_retained_for_resume": True,
         "out_of_core_pickle_ingestion": True,
         "correlation_block_rows": args.correlation_block_rows,
