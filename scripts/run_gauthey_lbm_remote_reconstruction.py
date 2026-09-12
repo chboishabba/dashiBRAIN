@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Recover exact Gauthey LBM selected-ROI source identities from Zenodo.
+"""Recover exact Gauthey LBM selected-ROI source identities from Zenodo or a local trial ZIP.
 
 The deposited ``dffs_audio_LB_corr_top05_all.pkl`` matrix is a literal row subset
 of six vertically stacked per-trial ``dffs_aligned[:, :7977]`` matrices. One of
@@ -11,6 +11,11 @@ Large aligned-trial pickles are loaded out of core. Embedded NumPy payloads are
 spilled directly to disk-backed memmaps and correlations are scored in row
 blocks, so neither pickle ingestion nor normalization requires a full trial
 matrix copy in RAM.
+
+For resumable large downloads, ``--local-source-zip`` processes exactly one
+explicit ``--trial`` from an already-downloaded nested source ZIP. This bypasses
+all remote archive access while preserving the exact same extraction, scoring,
+and source-row matching path.
 """
 
 from __future__ import annotations
@@ -72,8 +77,6 @@ def _blockwise_zero_lag_correlations(
 
     for start in range(0, traces.shape[0], block_rows):
         stop = min(start + block_rows, traces.shape[0])
-        # Convert only this block. If the source memmap is float32 this avoids a
-        # whole-trial float64 promotion; if already float64 it is still bounded.
         block = np.asarray(traces[start:stop, :LBM_MIN_TIMEPOINTS], dtype=float)
         means = block.mean(axis=1, keepdims=True)
         stds = block.std(axis=1, keepdims=True)
@@ -131,7 +134,6 @@ def _local_candidates_from_inner_zip(
                 local_rows = finite_rows[local_order]
                 pooled_rows = trial_index * LBM_ROWS_PER_TRIAL + local_rows
                 candidate_corr = finite_corr[local_order].astype(float, copy=True)
-                # Only the selected local candidate rows leave the memmap context.
                 candidate_traces = np.asarray(
                     traces[local_rows, :LBM_MIN_TIMEPOINTS], dtype=float
                 ).copy()
@@ -186,7 +188,23 @@ def main() -> None:
         choices=LBM_TRIALS,
         help="Recover only this segmentation-style trial ID; repeat for multiple trials. Default: all deposited trials.",
     )
+    parser.add_argument(
+        "--local-source-zip",
+        help=(
+            "Process one already-downloaded nested source ZIP and bypass all remote archive access. "
+            "Requires exactly one --trial."
+        ),
+    )
     args = parser.parse_args()
+
+    if args.local_source_zip is not None:
+        if args.trial is None or len(args.trial) != 1:
+            raise SystemExit("--local-source-zip requires exactly one --trial")
+        local_source_zip = Path(args.local_source_zip)
+        if not local_source_zip.is_file():
+            raise SystemExit(f"local source ZIP not found: {local_source_zip}")
+    else:
+        local_source_zip = None
 
     deposited_path = Path(args.deposited_selected)
     if not deposited_path.exists():
@@ -200,9 +218,9 @@ def main() -> None:
     output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=True)
 
-    by_name = {m.name: m for m in list_remote_zip(args.url)}
     requested = set(args.trial or LBM_TRIALS)
     stimulus = published_lbm_stimulus_regressor()
+    by_name = {} if local_source_zip is not None else {m.name: m for m in list_remote_zip(args.url)}
 
     recovered: list[tuple[int, int, float]] = []
     processed_trials: list[str] = []
@@ -213,48 +231,48 @@ def main() -> None:
     ):
         if trial_id not in requested:
             continue
-        if member_name not in by_name:
-            print(f"[{trial_id}] source container absent: {member_name}")
-            missing_trials.append(trial_id)
-            continue
 
-        member = by_name[member_name]
-        tmp_zip = scratch / f"{source_stem}.zip"
-        if tmp_zip.exists():
-            print(f"[{trial_id}] reusing existing source container {tmp_zip}")
+        if local_source_zip is not None:
+            tmp_zip = local_source_zip
+            print(f"[{trial_id}] using explicit local source container {tmp_zip}")
         else:
-            print(
-                f"[{trial_id}] streaming {member_name} "
-                f"({member.compressed_size / 1e9:.2f} GB compressed -> "
-                f"{member.uncompressed_size / 1e9:.2f} GB inner ZIP)"
-            )
-            stream_remote_member_to_file(
-                args.url,
-                member,
-                tmp_zip,
-                compressed_chunk_bytes=args.chunk_mib << 20,
-            )
-        try:
-            rows, corrs, traces = _local_candidates_from_inner_zip(
-                tmp_zip,
-                source_stem,
-                trial_index,
-                stimulus,
-                spill_dir=spill_dir,
-                correlation_block_rows=args.correlation_block_rows,
-            )
-            trial_matches = _match_candidates_to_deposited(deposited, rows, corrs, traces)
-            recovered.extend(trial_matches)
-            processed_trials.append(trial_id)
-            print(
-                f"  local candidates={len(rows)}; exact deposited matches={len(trial_matches)}; "
-                f"corr=[{float(corrs[0]):.6g}, {float(corrs[-1]):.6g}]"
-            )
-        finally:
-            # Keep an already-downloaded container after failure/success so a
-            # large network transfer never has to be repeated merely to debug
-            # local extraction. Explicit cleanup can be done after receipts land.
-            gc.collect()
+            if member_name not in by_name:
+                print(f"[{trial_id}] source container absent: {member_name}")
+                missing_trials.append(trial_id)
+                continue
+            member = by_name[member_name]
+            tmp_zip = scratch / f"{source_stem}.zip"
+            if tmp_zip.exists():
+                print(f"[{trial_id}] reusing existing source container {tmp_zip}")
+            else:
+                print(
+                    f"[{trial_id}] streaming {member_name} "
+                    f"({member.compressed_size / 1e9:.2f} GB compressed -> "
+                    f"{member.uncompressed_size / 1e9:.2f} GB inner ZIP)"
+                )
+                stream_remote_member_to_file(
+                    args.url,
+                    member,
+                    tmp_zip,
+                    compressed_chunk_bytes=args.chunk_mib << 20,
+                )
+
+        rows, corrs, traces = _local_candidates_from_inner_zip(
+            tmp_zip,
+            source_stem,
+            trial_index,
+            stimulus,
+            spill_dir=spill_dir,
+            correlation_block_rows=args.correlation_block_rows,
+        )
+        trial_matches = _match_candidates_to_deposited(deposited, rows, corrs, traces)
+        recovered.extend(trial_matches)
+        processed_trials.append(trial_id)
+        print(
+            f"  local candidates={len(rows)}; exact deposited matches={len(trial_matches)}; "
+            f"corr=[{float(corrs[0]):.6g}, {float(corrs[-1]):.6g}]"
+        )
+        gc.collect()
 
     by_deposited: dict[int, list[tuple[int, float]]] = {}
     for dep_row, pooled_row, corr in recovered:
@@ -300,6 +318,8 @@ def main() -> None:
         "source_containers_retained_for_resume": True,
         "out_of_core_pickle_ingestion": True,
         "correlation_block_rows": args.correlation_block_rows,
+        "remote_archive_accessed": local_source_zip is None,
+        "local_source_zip": None if local_source_zip is None else str(local_source_zip),
         "identity_semantics": "exact trace equality to deposited selected row; not neuron identity",
     }
     summary_path = output / "gauthey_lbm_reconstruction.json"
