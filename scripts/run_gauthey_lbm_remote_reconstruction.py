@@ -2,19 +2,15 @@
 """Recover exact Gauthey LBM selected-ROI source identities from Zenodo.
 
 The deposited ``dffs_audio_LB_corr_top05_all.pkl`` matrix is a literal row subset
-of six vertically stacked per-trial ``dffs_aligned[:, :7977]`` matrices.  One of
+of six vertically stacked per-trial ``dffs_aligned[:, :7977]`` matrices. One of
 the six source containers is absent from Zenodo record 17618684, so this runner
 recovers every identity that can be established from the available containers
 instead of treating one missing trial as a global failure.
 
-For each available trial it streams one nested ZIP at a time, computes the local
-top 1,620 stimulus-correlated rows (a superset of any rows that can enter the
-global top 1,620), and matches those source traces bit-for-bit against the
-published 1,620-row matrix.  Matched rows therefore receive exact
-(trial, plane, cluster) identities; unmatched deposited rows remain explicitly
-unresolved.  ``--trial`` can restrict execution to one source trial, which is
-useful for the complete 04032024_a2_r5 spatial lane that also has a deposited
-mean-brain volume.
+Large aligned-trial pickles are loaded out of core. Embedded NumPy payloads are
+spilled directly to disk-backed memmaps and correlations are scored in row
+blocks, so neither pickle ingestion nor normalization requires a full trial
+matrix copy in RAM.
 """
 
 from __future__ import annotations
@@ -25,7 +21,6 @@ import gc
 from hashlib import sha256
 import json
 from pathlib import Path
-import pickle
 import zipfile
 
 import numpy as np
@@ -40,10 +35,9 @@ from dashi.analysis.gauthey_lbm_experiment import (
     pooled_lbm_row_to_trial_plane_cluster,
     published_lbm_stimulus_regressor,
 )
+from dashi.io.out_of_core_numpy_pickle import load_numpy_pickle_out_of_core
 from dashi.io.remote_zip import list_remote_zip, stream_remote_member_to_file
 
-# Source dictionary/container stems differ from segmentation IDs: the source uses
-# GCaMP6f_04032024_a2_r1 while the segmentation is 04032024_6f_a2_r1.
 SOURCE_STEMS = (
     "GCaMP6f_04032024_a2_r1",
     "GCaMP6f_04032024_a2_r5",
@@ -55,12 +49,51 @@ SOURCE_STEMS = (
 SOURCE_CONTAINER_MEMBERS = tuple(f"Data/Dffs/Aligned/{stem}.zip" for stem in SOURCE_STEMS)
 
 
+def _blockwise_zero_lag_correlations(
+    traces_roi_by_time: np.ndarray,
+    stimulus: np.ndarray,
+    *,
+    block_rows: int = 256,
+) -> np.ndarray:
+    """Match the source zero-lag correlation formula without a full normalized copy."""
+    traces = traces_roi_by_time
+    if traces.ndim != 2:
+        raise ValueError("traces must be two-dimensional [roi,time]")
+    if traces.shape[1] < LBM_MIN_TIMEPOINTS:
+        raise ValueError("traces have fewer than the required aligned timepoints")
+    if block_rows <= 0:
+        raise ValueError("block_rows must be positive")
+
+    stim = np.asarray(stimulus, dtype=float)
+    if stim.shape != (LBM_MIN_TIMEPOINTS,):
+        raise ValueError("stimulus does not match the aligned Gauthey time carrier")
+    stim_norm = (stim - stim.mean()) / stim.std()
+    out = np.empty(traces.shape[0], dtype=float)
+
+    for start in range(0, traces.shape[0], block_rows):
+        stop = min(start + block_rows, traces.shape[0])
+        # Convert only this block. If the source memmap is float32 this avoids a
+        # whole-trial float64 promotion; if already float64 it is still bounded.
+        block = np.asarray(traces[start:stop, :LBM_MIN_TIMEPOINTS], dtype=float)
+        means = block.mean(axis=1, keepdims=True)
+        stds = block.std(axis=1, keepdims=True)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            normalized = (block - means) / stds
+        out[start:stop] = np.dot(normalized, stim_norm.T) / normalized.shape[1]
+        del block, means, stds, normalized
+    return out
+
+
 def _local_candidates_from_inner_zip(
     zip_path: Path,
     source_stem: str,
     trial_index: int,
     stimulus: np.ndarray,
+    *,
+    spill_dir: Path,
+    correlation_block_rows: int = 256,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Extract local candidate traces with bounded RAM from a nested source ZIP."""
     with zipfile.ZipFile(zip_path) as zf:
         expected_basename = f"{source_stem}.pkl"
         matches = [name for name in zf.namelist() if Path(name).name == expected_basename]
@@ -69,39 +102,40 @@ def _local_candidates_from_inner_zip(
                 f"expected exactly one {expected_basename} inside {zip_path}, found {matches}"
             )
         with zf.open(matches[0], "r") as handle:
-            payload = pickle.load(handle)
+            with load_numpy_pickle_out_of_core(handle, spill_dir=spill_dir) as payload:
+                if not isinstance(payload, dict) or "dffs_aligned" not in payload:
+                    raise RuntimeError(f"{expected_basename} lacks 'dffs_aligned'")
+                traces = payload["dffs_aligned"]
+                if not isinstance(traces, np.ndarray):
+                    raise RuntimeError(f"{expected_basename} dffs_aligned is not an ndarray")
+                if traces.ndim != 2 or traces.shape[0] != LBM_ROWS_PER_TRIAL:
+                    raise RuntimeError(
+                        f"{expected_basename} dffs_aligned shape {traces.shape}; expected "
+                        f"({LBM_ROWS_PER_TRIAL}, >= {LBM_MIN_TIMEPOINTS})"
+                    )
+                if traces.shape[1] < LBM_MIN_TIMEPOINTS:
+                    raise RuntimeError(f"{expected_basename} has too few aligned timepoints")
 
-    if not isinstance(payload, dict) or "dffs_aligned" not in payload:
-        raise RuntimeError(f"{expected_basename} lacks 'dffs_aligned'")
-    traces = np.asarray(payload["dffs_aligned"], dtype=float)
-    if traces.ndim != 2 or traces.shape[0] != LBM_ROWS_PER_TRIAL:
-        raise RuntimeError(
-            f"{expected_basename} dffs_aligned shape {traces.shape}; expected "
-            f"({LBM_ROWS_PER_TRIAL}, >= {LBM_MIN_TIMEPOINTS})"
-        )
-    if traces.shape[1] < LBM_MIN_TIMEPOINTS:
-        raise RuntimeError(f"{expected_basename} has too few aligned timepoints")
-    traces = traces[:, :LBM_MIN_TIMEPOINTS]
+                corr = _blockwise_zero_lag_correlations(
+                    traces,
+                    stimulus,
+                    block_rows=correlation_block_rows,
+                )
+                finite_mask = ~np.isnan(corr)
+                finite_rows = np.arange(LBM_ROWS_PER_TRIAL)[finite_mask]
+                finite_corr = corr[finite_mask]
+                if finite_rows.size < LBM_EXPECTED_SELECTED:
+                    raise RuntimeError(f"trial {LBM_TRIALS[trial_index]} has too few finite traces")
 
-    means = traces.mean(axis=1, keepdims=True)
-    stds = traces.std(axis=1, keepdims=True)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        normalized = (traces - means) / stds
-    stim_norm = (stimulus - stimulus.mean()) / stimulus.std()
-    corr = np.dot(normalized, stim_norm.T) / normalized.shape[1]
+                local_order = np.argsort(finite_corr)[-LBM_EXPECTED_SELECTED:]
+                local_rows = finite_rows[local_order]
+                pooled_rows = trial_index * LBM_ROWS_PER_TRIAL + local_rows
+                candidate_corr = finite_corr[local_order].astype(float, copy=True)
+                # Only the selected local candidate rows leave the memmap context.
+                candidate_traces = np.asarray(
+                    traces[local_rows, :LBM_MIN_TIMEPOINTS], dtype=float
+                ).copy()
 
-    finite_mask = ~np.isnan(corr)
-    finite_rows = np.arange(LBM_ROWS_PER_TRIAL)[finite_mask]
-    finite_corr = corr[finite_mask]
-    if finite_rows.size < LBM_EXPECTED_SELECTED:
-        raise RuntimeError(f"trial {LBM_TRIALS[trial_index]} has too few finite traces")
-    local_order = np.argsort(finite_corr)[-LBM_EXPECTED_SELECTED:]
-    local_rows = finite_rows[local_order]
-    pooled_rows = trial_index * LBM_ROWS_PER_TRIAL + local_rows
-    candidate_corr = finite_corr[local_order].astype(float, copy=True)
-    candidate_traces = np.asarray(traces[local_rows, :], dtype=float).copy()
-
-    del payload, traces, normalized, corr
     gc.collect()
     return pooled_rows.astype(np.int64), candidate_corr, candidate_traces
 
@@ -117,11 +151,7 @@ def _match_candidates_to_deposited(
     candidate_corrs: np.ndarray,
     candidate_traces: np.ndarray,
 ) -> list[tuple[int, int, float]]:
-    """Return exact (deposited_row, pooled_source_row, correlation) matches.
-
-    SHA-256 is used only as an index; every hash hit is confirmed with
-    ``np.array_equal(..., equal_nan=True)`` before an identity is emitted.
-    """
+    """Return exact (deposited_row, pooled_source_row, correlation) matches."""
     deposited_index: dict[bytes, list[int]] = {}
     for i in range(deposited.shape[0]):
         deposited_index.setdefault(_row_digest(deposited[i]), []).append(i)
@@ -129,7 +159,7 @@ def _match_candidates_to_deposited(
     matches: list[tuple[int, int, float]] = []
     used_deposited: set[int] = set()
     for pooled_row, corr, trace in zip(candidate_rows, candidate_corrs, candidate_traces):
-        for dep_row in deposited_index.get(_row_digest(trace), ()):  # normally 0 or 1
+        for dep_row in deposited_index.get(_row_digest(trace), ()):
             if dep_row in used_deposited:
                 continue
             if np.array_equal(trace, deposited[dep_row], equal_nan=True):
@@ -149,6 +179,7 @@ def main() -> None:
     parser.add_argument("--scratch-dir", default="data/gauthey_lbm/scratch")
     parser.add_argument("--url", default=GAUTHEY_DATA_ZIP_URL)
     parser.add_argument("--chunk-mib", type=int, default=8)
+    parser.add_argument("--correlation-block-rows", type=int, default=256)
     parser.add_argument(
         "--trial",
         action="append",
@@ -164,6 +195,8 @@ def main() -> None:
 
     scratch = Path(args.scratch_dir)
     scratch.mkdir(parents=True, exist_ok=True)
+    spill_dir = scratch / "pickle_spill"
+    spill_dir.mkdir(parents=True, exist_ok=True)
     output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=True)
 
@@ -187,20 +220,28 @@ def main() -> None:
 
         member = by_name[member_name]
         tmp_zip = scratch / f"{source_stem}.zip"
-        print(
-            f"[{trial_id}] streaming {member_name} "
-            f"({member.compressed_size / 1e9:.2f} GB compressed -> "
-            f"{member.uncompressed_size / 1e9:.2f} GB inner ZIP)"
-        )
-        stream_remote_member_to_file(
-            args.url,
-            member,
-            tmp_zip,
-            compressed_chunk_bytes=args.chunk_mib << 20,
-        )
+        if tmp_zip.exists():
+            print(f"[{trial_id}] reusing existing source container {tmp_zip}")
+        else:
+            print(
+                f"[{trial_id}] streaming {member_name} "
+                f"({member.compressed_size / 1e9:.2f} GB compressed -> "
+                f"{member.uncompressed_size / 1e9:.2f} GB inner ZIP)"
+            )
+            stream_remote_member_to_file(
+                args.url,
+                member,
+                tmp_zip,
+                compressed_chunk_bytes=args.chunk_mib << 20,
+            )
         try:
             rows, corrs, traces = _local_candidates_from_inner_zip(
-                tmp_zip, source_stem, trial_index, stimulus
+                tmp_zip,
+                source_stem,
+                trial_index,
+                stimulus,
+                spill_dir=spill_dir,
+                correlation_block_rows=args.correlation_block_rows,
             )
             trial_matches = _match_candidates_to_deposited(deposited, rows, corrs, traces)
             recovered.extend(trial_matches)
@@ -210,12 +251,11 @@ def main() -> None:
                 f"corr=[{float(corrs[0]):.6g}, {float(corrs[-1]):.6g}]"
             )
         finally:
-            tmp_zip.unlink(missing_ok=True)
+            # Keep an already-downloaded container after failure/success so a
+            # large network transfer never has to be repeated merely to debug
+            # local extraction. Explicit cleanup can be done after receipts land.
             gc.collect()
 
-    # A deposited row must have at most one exact source identity across the
-    # processed trials. Duplicate source traces are reported rather than silently
-    # adjudicated.
     by_deposited: dict[int, list[tuple[int, float]]] = {}
     for dep_row, pooled_row, corr in recovered:
         by_deposited.setdefault(dep_row, []).append((pooled_row, corr))
@@ -257,7 +297,9 @@ def main() -> None:
         "complete_identity_recovery": len(unresolved_rows) == 0,
         "identity_output": str(identity_path),
         "unresolved_output": str(unresolved_path),
-        "scratch_containers_retained": False,
+        "source_containers_retained_for_resume": True,
+        "out_of_core_pickle_ingestion": True,
+        "correlation_block_rows": args.correlation_block_rows,
         "identity_semantics": "exact trace equality to deposited selected row; not neuron identity",
     }
     summary_path = output / "gauthey_lbm_reconstruction.json"
