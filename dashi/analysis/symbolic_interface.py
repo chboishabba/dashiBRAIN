@@ -1,9 +1,9 @@
 """Clean-room receipt layer for MaleCNS symbolic-output experiments.
 
-This module deliberately separates topology, executable dynamics, interface
-semantics, emitted source text, task evaluation, and competence promotion.
-It does not claim that any viral Python/FizzBuzz demonstration has been
-reproduced; it provides the auditable carrier needed to do so.
+This module deliberately separates topology, neuron-identity assignment,
+intervention, executable dynamics, interface semantics, emitted source text,
+task evaluation, and competence promotion. It does not claim that any viral
+Python/FizzBuzz demonstration has been reproduced.
 """
 
 from __future__ import annotations
@@ -15,8 +15,12 @@ from enum import Enum
 class TopologyKind(str, Enum):
     MALE_CNS = "male_cns"
     DEGREE_PRESERVING_REWIRE = "degree_preserving_rewire"
-    SHUFFLED_NEURON_IDENTITY = "shuffled_neuron_identity"
     MATCHED_GENERIC_RECURRENT_NETWORK = "matched_generic_recurrent_network"
+
+
+class IdentityAssignmentKind(str, Enum):
+    NATIVE = "native"
+    SHUFFLED = "shuffled"
 
 
 class InterventionKind(str, Enum):
@@ -73,6 +77,7 @@ _HASH_FIELDS = (
 class SymbolicRunReceipt:
     run_id: str
     topology_kind: TopologyKind
+    identity_assignment_kind: IdentityAssignmentKind
     intervention_kind: InterventionKind
     assistance: AssistanceBudget
     connectome_or_topology_sha256: str
@@ -148,14 +153,32 @@ def assert_matched_topology_control(
     candidate: SymbolicRunReceipt,
     control: SymbolicRunReceipt,
 ) -> None:
-    """Require a fair topology comparison with all assistance held fixed."""
+    """Require a fair topology comparison with all other axes held fixed."""
 
     if candidate.topology_kind == control.topology_kind:
         raise ValueError("topology control requires a distinct topology kind")
+    if candidate.identity_assignment_kind != control.identity_assignment_kind:
+        raise ValueError("topology control must preserve identity assignment")
     if candidate.intervention_kind != control.intervention_kind:
         raise ValueError("topology control must preserve intervention kind")
     if candidate.assistance != control.assistance:
         raise ValueError("topology control requires an identical assistance budget")
+
+
+def assert_matched_identity_control(
+    candidate: SymbolicRunReceipt,
+    control: SymbolicRunReceipt,
+) -> None:
+    """Require an identity-assignment control with topology/dynamics fixed."""
+
+    if candidate.topology_kind != control.topology_kind:
+        raise ValueError("identity control must preserve topology kind")
+    if candidate.intervention_kind != control.intervention_kind:
+        raise ValueError("identity control must preserve intervention kind")
+    if candidate.identity_assignment_kind == control.identity_assignment_kind:
+        raise ValueError("identity control requires a distinct identity assignment")
+    if candidate.assistance != control.assistance:
+        raise ValueError("identity control requires an identical assistance budget")
 
 
 def assert_matched_intervention_control(
@@ -166,6 +189,8 @@ def assert_matched_intervention_control(
 
     if candidate.topology_kind != control.topology_kind:
         raise ValueError("intervention control must preserve topology kind")
+    if candidate.identity_assignment_kind != control.identity_assignment_kind:
+        raise ValueError("intervention control must preserve identity assignment")
     if candidate.intervention_kind != InterventionKind.BASELINE:
         raise ValueError("candidate intervention must be baseline")
 
