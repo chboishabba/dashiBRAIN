@@ -5,8 +5,10 @@ on:
     paths:
       - "dashi/analysis/symbolic_interface.py"
       - "dashi/analysis/symbolic_runner.py"
+      - "dashi/analysis/symbolic_controls.py"
       - "tests/test_symbolic_interface.py"
       - "tests/test_symbolic_runner.py"
+      - "tests/test_symbolic_controls.py"
       - ".github/workflows/symbolic-cleanroom.yml"
 
 jobs:
@@ -20,4 +22,8 @@ jobs:
       - name: Install focused dependencies
         run: python -m pip install numpy scipy pytest
       - name: Run symbolic clean-room tests
-        run: python -m pytest -q tests/test_symbolic_interface.py tests/test_symbolic_runner.py
+        run: >-
+          python -m pytest -q
+          tests/test_symbolic_interface.py
+          tests/test_symbolic_runner.py
+          tests/test_symbolic_controls.py
