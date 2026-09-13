@@ -1,0 +1,49 @@
+name: symbolic-cleanroom
+
+on:
+  pull_request:
+    paths:
+      - "dashi/analysis/symbolic_interface.py"
+      - "dashi/analysis/symbolic_runner.py"
+      - "dashi/analysis/symbolic_controls.py"
+      - "dashi/analysis/symbolic_experiment.py"
+      - "dashi/analysis/symbolic_packet.py"
+      - "dashi/analysis/eligibility_trace_learning.py"
+      - "dashi/analysis/rate_eligibility_dynamics.py"
+      - "dashi/analysis/sparse_rate_learning.py"
+      - "dashi/analysis/sparse_rate_training.py"
+      - "dashi/analysis/sparse_information_energy_objective.py"
+      - "dashi/analysis/symbolic_learning_promotion.py"
+      - "tests/test_symbolic_interface.py"
+      - "tests/test_symbolic_runner.py"
+      - "tests/test_symbolic_controls.py"
+      - "tests/test_eligibility_trace_learning.py"
+      - "tests/test_rate_eligibility_dynamics.py"
+      - "tests/test_sparse_rate_learning.py"
+      - "tests/test_sparse_rate_training_epoch.py"
+      - "tests/test_sparse_information_energy_objective.py"
+      - "tests/test_symbolic_learning_promotion.py"
+      - ".github/workflows/symbolic-cleanroom.yml"
+
+jobs:
+  focused-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install focused dependencies
+        run: python -m pip install numpy scipy pytest
+      - name: Run symbolic clean-room tests
+        run: >-
+          python -m pytest -q
+          tests/test_symbolic_interface.py
+          tests/test_symbolic_runner.py
+          tests/test_symbolic_controls.py
+          tests/test_eligibility_trace_learning.py
+          tests/test_rate_eligibility_dynamics.py
+          tests/test_sparse_rate_learning.py
+          tests/test_sparse_rate_training_epoch.py
+          tests/test_sparse_information_energy_objective.py
+          tests/test_symbolic_learning_promotion.py
