@@ -1,6 +1,6 @@
 # DASHI kernel prototype (hemibrain)
 
-This repo implements the DASHI kernel formalism for the Drosophila hemibrain. The objective is to detect kernel-closed (or low-defect) ternary fields that persist across coarse-grainings, not to fit ML models.
+This repo implements the DASHI kernel formalism for the Drosophila hemibrain. The objective is to detect kernel-closed (or low-defect) ternary fields and characterize which parts of their geometry survive admissible coarse-graining, not to fit black-box ML models.
 
 ## Guiding principles
 - Kernel-first: all downstream work respects kernel closure/defect semantics.
@@ -8,26 +8,37 @@ This repo implements the DASHI kernel formalism for the Drosophila hemibrain. Th
 - Formal traceability: functions map to definitions (carrier, valuation, kernel, defect, renormalisation, latent structure).
 - Non-ML bias: no learned parameters unless explicitly marked as admissible gauges.
 
-## Current focus (Sprint 1–2 solo prototype)
-- Sprint 1: load hemibrain edges/metadata, compute baseline expectations, and ternarise residuals.
-- Sprint 2: implement kernel operator and flow (single scale) with defect reporting.
-- Out-of-scope: coarse-graining, fibers, performance tuning, learned weights.
+## Current focus
+- Full hemibrain sparse-baseline kernel runs and closed-state capture.
+- Defect, neutral-shell, and signed-component geometry.
+- Random, degree-binned, ROI, hop-radius, and voxel coarse-graining probes.
+- Formal separation of atomic, affine, nonlinear, and exploded regimes.
+- Weighted threshold-CSP interpretation of kernel closure and defect.
 
-## Layout (planned)
-- `docs/`: formal axioms, dataset spec, gauge choices, sprint plan.
-- `dashi/`: Python package with `io`, `baseline`, `valuation`, `kernel`, `analysis` (defect/latent structure later), `viz` stubs.
-- `tests/`: lightweight determinism and invariance checks.
+## Formal notes
+- `docs/formal_axioms.md`: core carrier, kernel, defect, and renormalisation definitions.
+- `docs/nonlinear-sparsity.md`: nonlinear sparsity theorems, ℓ1/ReLU contrast, and exact weighted-CSP correspondence.
+- `docs/sprint-01-02.md` through `docs/sprint-04.md`: implementation and experimental record.
 
-## Quick start (after deps)
+## Layout
+- `docs/`: formal axioms, theorem notes, dataset/gauge specs, and sprint records.
+- `dashi/`: Python package with `io`, `baseline`, `valuation`, `kernel`, `analysis`, and `viz` modules.
+- `scripts/`: hemibrain runs, diagnostics, and coarse-graining tools.
+- `tests/`: determinism, invariance, flow, and nonlinear-sparsity checks.
+
+## Quick start
+
+Defect curve CLI for an edge list with columns `source_id,target_id,weight`:
+
 ```bash
-python -m pip install -e .  # (planned once packaging is added)
+PYTHONPATH=. python scripts/defect_curve.py path/to/edges.csv \
+  --baseline sparse_dc --steps 10 --hops 1 --deadzone 1e-9
 ```
 
-Defect curve CLI (edge list CSV/TSV with columns `source_id,target_id,weight`):
+Outputs are timestamped CSV/PNG artifacts, including the final state and per-step defecting nodes. Notebook variant: `notebooks/sprint-01-02.ipynb`.
+
+Run tests with:
+
 ```bash
-python scripts/defect_curve.py path/to/edges.csv --steps 10 --hops 1 --deadzone 1e-9
+PYTHONPATH=. python -m unittest discover tests
 ```
-
-Outputs are timestamped CSV/PNG (default prefix `outputs/defect_curve_YYYYMMDD-HHMMSS.*`). Notebook variant: `notebooks/sprint-01-02.ipynb`.
-
-For now, see `docs/sprint-01-02.md` for the active checklist and module stubs.
