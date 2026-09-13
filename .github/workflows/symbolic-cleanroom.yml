@@ -6,9 +6,23 @@ on:
       - "dashi/analysis/symbolic_interface.py"
       - "dashi/analysis/symbolic_runner.py"
       - "dashi/analysis/symbolic_controls.py"
+      - "dashi/analysis/symbolic_experiment.py"
+      - "dashi/analysis/symbolic_packet.py"
+      - "dashi/analysis/eligibility_trace_learning.py"
+      - "dashi/analysis/rate_eligibility_dynamics.py"
+      - "dashi/analysis/sparse_rate_learning.py"
+      - "dashi/analysis/sparse_rate_training.py"
+      - "dashi/analysis/sparse_information_energy_objective.py"
+      - "dashi/analysis/symbolic_learning_promotion.py"
       - "tests/test_symbolic_interface.py"
       - "tests/test_symbolic_runner.py"
       - "tests/test_symbolic_controls.py"
+      - "tests/test_eligibility_trace_learning.py"
+      - "tests/test_rate_eligibility_dynamics.py"
+      - "tests/test_sparse_rate_learning.py"
+      - "tests/test_sparse_rate_training_epoch.py"
+      - "tests/test_sparse_information_energy_objective.py"
+      - "tests/test_symbolic_learning_promotion.py"
       - ".github/workflows/symbolic-cleanroom.yml"
 
 jobs:
@@ -27,3 +41,9 @@ jobs:
           tests/test_symbolic_interface.py
           tests/test_symbolic_runner.py
           tests/test_symbolic_controls.py
+          tests/test_eligibility_trace_learning.py
+          tests/test_rate_eligibility_dynamics.py
+          tests/test_sparse_rate_learning.py
+          tests/test_sparse_rate_training_epoch.py
+          tests/test_sparse_information_energy_objective.py
+          tests/test_symbolic_learning_promotion.py
