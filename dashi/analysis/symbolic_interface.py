@@ -8,16 +8,20 @@ reproduced; it provides the auditable carrier needed to do so.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from enum import Enum
 
 
-class NullModelKind(str, Enum):
+class TopologyKind(str, Enum):
     MALE_CNS = "male_cns"
     DEGREE_PRESERVING_REWIRE = "degree_preserving_rewire"
     SHUFFLED_NEURON_IDENTITY = "shuffled_neuron_identity"
     MATCHED_GENERIC_RECURRENT_NETWORK = "matched_generic_recurrent_network"
-    IDENTICAL_DECODER_NO_LEARNING = "identical_decoder_no_learning"
+
+
+class InterventionKind(str, Enum):
+    BASELINE = "baseline"
+    NO_LEARNING = "no_learning"
     ALTERNATE_INITIALIZATION = "alternate_initialization"
 
 
@@ -68,7 +72,8 @@ _HASH_FIELDS = (
 @dataclass(frozen=True)
 class SymbolicRunReceipt:
     run_id: str
-    topology_kind: NullModelKind
+    topology_kind: TopologyKind
+    intervention_kind: InterventionKind
     assistance: AssistanceBudget
     connectome_or_topology_sha256: str
     dynamics_artifact_sha256: str
@@ -126,18 +131,60 @@ def competence_level(receipt: SymbolicRunReceipt) -> str:
     return "mapped_token_emission"
 
 
-def assert_matched_assistance_budget(
+def _budget_equal_except(
+    left: AssistanceBudget,
+    right: AssistanceBudget,
+    allowed_difference: str,
+) -> bool:
+    for field in fields(AssistanceBudget):
+        if field.name == allowed_difference:
+            continue
+        if getattr(left, field.name) != getattr(right, field.name):
+            return False
+    return True
+
+
+def assert_matched_topology_control(
     candidate: SymbolicRunReceipt,
     control: SymbolicRunReceipt,
 ) -> None:
-    """Require a fair topology/null comparison.
-
-    Only the topology/control coordinate may differ here. Interface, dynamics
-    description, decoder, reward/evaluator, prompting, attempt budget, and
-    selection policy must remain identical.
-    """
+    """Require a fair topology comparison with all assistance held fixed."""
 
     if candidate.topology_kind == control.topology_kind:
-        raise ValueError("null comparison requires a distinct topology kind")
+        raise ValueError("topology control requires a distinct topology kind")
+    if candidate.intervention_kind != control.intervention_kind:
+        raise ValueError("topology control must preserve intervention kind")
     if candidate.assistance != control.assistance:
-        raise ValueError("null comparison requires an identical assistance budget")
+        raise ValueError("topology control requires an identical assistance budget")
+
+
+def assert_matched_intervention_control(
+    candidate: SymbolicRunReceipt,
+    control: SymbolicRunReceipt,
+) -> None:
+    """Require that an intervention changes only its declared coordinate."""
+
+    if candidate.topology_kind != control.topology_kind:
+        raise ValueError("intervention control must preserve topology kind")
+    if candidate.intervention_kind != InterventionKind.BASELINE:
+        raise ValueError("candidate intervention must be baseline")
+
+    if control.intervention_kind == InterventionKind.ALTERNATE_INITIALIZATION:
+        if candidate.assistance.initial_state_or_seed == control.assistance.initial_state_or_seed:
+            raise ValueError("alternate initialization must change initial_state_or_seed")
+        if not _budget_equal_except(
+            candidate.assistance,
+            control.assistance,
+            "initial_state_or_seed",
+        ):
+            raise ValueError("alternate initialization may change only initial_state_or_seed")
+        return
+
+    if control.intervention_kind == InterventionKind.NO_LEARNING:
+        if candidate.assistance.update_rule == control.assistance.update_rule:
+            raise ValueError("no-learning control must change update_rule")
+        if not _budget_equal_except(candidate.assistance, control.assistance, "update_rule"):
+            raise ValueError("no-learning control may change only update_rule")
+        return
+
+    raise ValueError("control intervention must declare a non-baseline intervention")
