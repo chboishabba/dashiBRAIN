@@ -1,14 +1,16 @@
-"""Attributed eligibility-trace update primitive for clean-room experiments.
+"""Attributed eligibility-trace primitives for clean-room experiments.
 
-This module implements only the factorization used in the learning-rule
-specialization discussed by Dhiman & Panwar (Scientific Reports, 2026,
-DOI: 10.1038/s41598-026-52140-3): a neuron-level learning signal combining
-information and energy terms, multiplied by local synaptic eligibility traces.
+Two source objects are kept separate here:
 
-It is a clean-room specialization for future experiments. It is not evidence
-that the viral fruit-fly Python/FizzBuzz demo used this rule, and it does not
-construct eligibility traces or objective gradients from DASHI kernel states.
-Those adapters remain separate implementation debt.
+1. The paper-level Dhiman & Panwar factorization combines a neuron-level
+   information/energy learning signal with local synaptic eligibility traces.
+2. The archived publication-supplement rerun script labels an executable arm
+   ``EProp`` and uses a clipped exponentially accumulated Hebbian trace with a
+   reward/objective baseline.
+
+The archived executable rule is not silently identified with the paper-level
+factorization, and neither is evidence for the hidden learning rule of the
+viral fruit-fly Python/FizzBuzz demonstration.
 """
 
 from __future__ import annotations
@@ -17,6 +19,10 @@ import numpy as np
 
 
 DHIMAN_PANWAR_DOI = "10.1038/s41598-026-52140-3"
+PART_E_SOURCE_REVISION = (
+    "NSSIL/Energy-efficient-information-processing-and-eligibility"
+    "@19bcd7d83a044f90ad691bff5bfe1df636b7150a"
+)
 
 
 def compose_information_energy_signal(
@@ -73,3 +79,80 @@ def factorized_eligibility_delta(
             )
         delta = np.where(mask, delta, 0.0)
     return delta
+
+
+def archived_part_e_eligibility_step(
+    previous_trace: np.ndarray,
+    hebbian_drive: np.ndarray,
+    *,
+    alpha_trace: float = 0.9,
+    trace_clip: float = 5.0,
+) -> np.ndarray:
+    """Reproduce the archived Part-E ``EProp`` trace recurrence.
+
+    The supplementary rerun script computes
+
+        e <- clip(alpha_trace * e + hebbian, -trace_clip, trace_clip)
+
+    where ``hebbian`` is a per-edge mean post/pre activity product.
+    """
+    if not 0.0 <= alpha_trace <= 1.0:
+        raise ValueError("alpha_trace must lie in [0, 1]")
+    if trace_clip <= 0:
+        raise ValueError("trace_clip must be positive")
+
+    previous = np.asarray(previous_trace, dtype=float)
+    hebbian = np.asarray(hebbian_drive, dtype=float)
+    if previous.shape != hebbian.shape:
+        raise ValueError("previous_trace and hebbian_drive must have identical shape")
+    return np.clip(
+        alpha_trace * previous + hebbian,
+        -trace_clip,
+        trace_clip,
+    )
+
+
+def archived_part_e_weight_update(
+    weights: np.ndarray,
+    eligibility_trace: np.ndarray,
+    *,
+    objective: float,
+    running_baseline: float,
+    learning_rate: float,
+    update_clip: float = 0.1,
+    baseline_decay: float = 0.9,
+) -> tuple[np.ndarray, float, np.ndarray]:
+    """Apply the archived Part-E objective-baseline eligibility update.
+
+    This reproduces the released supplementary recurrence:
+
+        update = clip(lr * (J - R_avg) * e, -clip, clip)
+        W_new  = max(W + update, 0)
+        R_avg  = decay * R_avg + (1-decay) * J
+
+    It does not add the script's separate upper weight clip or construct the
+    Hebbian drive; those remain explicit surrounding experiment coordinates.
+    """
+    if learning_rate < 0:
+        raise ValueError("learning_rate must be non-negative")
+    if update_clip <= 0:
+        raise ValueError("update_clip must be positive")
+    if not 0.0 <= baseline_decay <= 1.0:
+        raise ValueError("baseline_decay must lie in [0, 1]")
+
+    W = np.asarray(weights, dtype=float)
+    trace = np.asarray(eligibility_trace, dtype=float)
+    if W.shape != trace.shape:
+        raise ValueError("weights and eligibility_trace must have identical shape")
+
+    update = np.clip(
+        learning_rate * (float(objective) - float(running_baseline)) * trace,
+        -update_clip,
+        update_clip,
+    )
+    new_weights = np.maximum(W + update, 0.0)
+    new_baseline = (
+        baseline_decay * float(running_baseline)
+        + (1.0 - baseline_decay) * float(objective)
+    )
+    return new_weights, new_baseline, update
