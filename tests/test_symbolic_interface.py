@@ -4,9 +4,11 @@ import pytest
 
 from dashi.analysis.symbolic_interface import (
     AssistanceBudget,
-    NullModelKind,
+    InterventionKind,
     SymbolicRunReceipt,
-    assert_matched_assistance_budget,
+    TopologyKind,
+    assert_matched_intervention_control,
+    assert_matched_topology_control,
     competence_level,
 )
 
@@ -26,10 +28,14 @@ def budget() -> AssistanceBudget:
     )
 
 
-def receipt(kind: NullModelKind = NullModelKind.MALE_CNS) -> SymbolicRunReceipt:
+def receipt(
+    topology: TopologyKind = TopologyKind.MALE_CNS,
+    intervention: InterventionKind = InterventionKind.BASELINE,
+) -> SymbolicRunReceipt:
     return SymbolicRunReceipt(
         run_id="run-001",
-        topology_kind=kind,
+        topology_kind=topology,
+        intervention_kind=intervention,
         assistance=budget(),
         connectome_or_topology_sha256="1" * 64,
         dynamics_artifact_sha256="2" * 64,
@@ -78,23 +84,59 @@ def test_general_programming_is_never_inferred_from_fizzbuzz():
     assert competence_level(paid) == "cross_task_transfer"
 
 
-def test_null_comparison_requires_identical_assistance_budget():
-    candidate = receipt(NullModelKind.MALE_CNS)
-    null = replace(
-        receipt(NullModelKind.DEGREE_PRESERVING_REWIRE),
+def test_topology_control_requires_identical_assistance_budget():
+    candidate = receipt(TopologyKind.MALE_CNS)
+    control = replace(
+        receipt(TopologyKind.DEGREE_PRESERVING_REWIRE),
         run_id="run-null",
     )
-    assert_matched_assistance_budget(candidate, null)
+    assert_matched_topology_control(candidate, control)
 
     mismatched = replace(
-        null,
-        assistance=replace(null.assistance, attempt_budget=2),
+        control,
+        assistance=replace(control.assistance, attempt_budget=2),
     )
     with pytest.raises(ValueError, match="assistance budget"):
-        assert_matched_assistance_budget(candidate, mismatched)
+        assert_matched_topology_control(candidate, mismatched)
 
 
-def test_null_comparison_rejects_same_topology_kind():
-    candidate = receipt(NullModelKind.MALE_CNS)
+def test_topology_control_rejects_same_topology():
+    candidate = receipt(TopologyKind.MALE_CNS)
     with pytest.raises(ValueError, match="distinct topology"):
-        assert_matched_assistance_budget(candidate, replace(candidate, run_id="run-002"))
+        assert_matched_topology_control(candidate, replace(candidate, run_id="run-002"))
+
+
+def test_alternate_initialization_changes_only_seed_coordinate():
+    candidate = receipt()
+    control = replace(
+        candidate,
+        run_id="seed-control",
+        intervention_kind=InterventionKind.ALTERNATE_INITIALIZATION,
+        assistance=replace(candidate.assistance, initial_state_or_seed="seed=8"),
+    )
+    assert_matched_intervention_control(candidate, control)
+
+    bad = replace(
+        control,
+        assistance=replace(control.assistance, decoder_mapping="changed decoder"),
+    )
+    with pytest.raises(ValueError, match="only initial_state_or_seed"):
+        assert_matched_intervention_control(candidate, bad)
+
+
+def test_no_learning_control_changes_only_update_rule():
+    candidate = receipt()
+    control = replace(
+        candidate,
+        run_id="no-learning-control",
+        intervention_kind=InterventionKind.NO_LEARNING,
+        assistance=replace(candidate.assistance, update_rule="no learning/update"),
+    )
+    assert_matched_intervention_control(candidate, control)
+
+    bad = replace(
+        control,
+        assistance=replace(control.assistance, attempt_budget=2),
+    )
+    with pytest.raises(ValueError, match="only update_rule"):
+        assert_matched_intervention_control(candidate, bad)
