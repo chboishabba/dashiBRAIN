@@ -4,9 +4,11 @@ import pytest
 
 from dashi.analysis.symbolic_interface import (
     AssistanceBudget,
+    IdentityAssignmentKind,
     InterventionKind,
     SymbolicRunReceipt,
     TopologyKind,
+    assert_matched_identity_control,
     assert_matched_intervention_control,
     assert_matched_topology_control,
     competence_level,
@@ -30,11 +32,13 @@ def budget() -> AssistanceBudget:
 
 def receipt(
     topology: TopologyKind = TopologyKind.MALE_CNS,
+    identity: IdentityAssignmentKind = IdentityAssignmentKind.NATIVE,
     intervention: InterventionKind = InterventionKind.BASELINE,
 ) -> SymbolicRunReceipt:
     return SymbolicRunReceipt(
         run_id="run-001",
         topology_kind=topology,
+        identity_assignment_kind=identity,
         intervention_kind=intervention,
         assistance=budget(),
         connectome_or_topology_sha256="1" * 64,
@@ -104,6 +108,26 @@ def test_topology_control_rejects_same_topology():
     candidate = receipt(TopologyKind.MALE_CNS)
     with pytest.raises(ValueError, match="distinct topology"):
         assert_matched_topology_control(candidate, replace(candidate, run_id="run-002"))
+
+
+def test_identity_control_preserves_topology_and_assistance():
+    candidate = receipt()
+    control = replace(
+        candidate,
+        run_id="identity-control",
+        identity_assignment_kind=IdentityAssignmentKind.SHUFFLED,
+    )
+    assert_matched_identity_control(candidate, control)
+
+    bad = replace(control, topology_kind=TopologyKind.DEGREE_PRESERVING_REWIRE)
+    with pytest.raises(ValueError, match="preserve topology"):
+        assert_matched_identity_control(candidate, bad)
+
+
+def test_identity_control_requires_distinct_identity_assignment():
+    candidate = receipt()
+    with pytest.raises(ValueError, match="distinct identity assignment"):
+        assert_matched_identity_control(candidate, replace(candidate, run_id="same-identity"))
 
 
 def test_alternate_initialization_changes_only_seed_coordinate():
