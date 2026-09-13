@@ -66,6 +66,7 @@ class AssistanceBudget:
 
 _HASH_FIELDS = (
     "connectome_or_topology_sha256",
+    "identity_assignment_sha256",
     "dynamics_artifact_sha256",
     "decoder_artifact_sha256",
     "output_artifact_sha256",
@@ -81,6 +82,7 @@ class SymbolicRunReceipt:
     intervention_kind: InterventionKind
     assistance: AssistanceBudget
     connectome_or_topology_sha256: str
+    identity_assignment_sha256: str
     dynamics_artifact_sha256: str
     decoder_artifact_sha256: str
     output_artifact_sha256: str
@@ -157,8 +159,12 @@ def assert_matched_topology_control(
 
     if candidate.topology_kind == control.topology_kind:
         raise ValueError("topology control requires a distinct topology kind")
+    if candidate.connectome_or_topology_sha256 == control.connectome_or_topology_sha256:
+        raise ValueError("topology control requires a changed topology artifact")
     if candidate.identity_assignment_kind != control.identity_assignment_kind:
         raise ValueError("topology control must preserve identity assignment")
+    if candidate.identity_assignment_sha256 != control.identity_assignment_sha256:
+        raise ValueError("topology control must preserve identity-assignment artifact")
     if candidate.intervention_kind != control.intervention_kind:
         raise ValueError("topology control must preserve intervention kind")
     if candidate.assistance != control.assistance:
@@ -173,10 +179,14 @@ def assert_matched_identity_control(
 
     if candidate.topology_kind != control.topology_kind:
         raise ValueError("identity control must preserve topology kind")
+    if candidate.connectome_or_topology_sha256 != control.connectome_or_topology_sha256:
+        raise ValueError("identity control must preserve topology artifact")
     if candidate.intervention_kind != control.intervention_kind:
         raise ValueError("identity control must preserve intervention kind")
     if candidate.identity_assignment_kind == control.identity_assignment_kind:
         raise ValueError("identity control requires a distinct identity assignment")
+    if candidate.identity_assignment_sha256 == control.identity_assignment_sha256:
+        raise ValueError("identity control requires a changed identity-assignment artifact")
     if candidate.assistance != control.assistance:
         raise ValueError("identity control requires an identical assistance budget")
 
@@ -189,8 +199,12 @@ def assert_matched_intervention_control(
 
     if candidate.topology_kind != control.topology_kind:
         raise ValueError("intervention control must preserve topology kind")
+    if candidate.connectome_or_topology_sha256 != control.connectome_or_topology_sha256:
+        raise ValueError("intervention control must preserve topology artifact")
     if candidate.identity_assignment_kind != control.identity_assignment_kind:
         raise ValueError("intervention control must preserve identity assignment")
+    if candidate.identity_assignment_sha256 != control.identity_assignment_sha256:
+        raise ValueError("intervention control must preserve identity-assignment artifact")
     if candidate.intervention_kind != InterventionKind.BASELINE:
         raise ValueError("candidate intervention must be baseline")
 
