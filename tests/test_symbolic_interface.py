@@ -35,13 +35,16 @@ def receipt(
     identity: IdentityAssignmentKind = IdentityAssignmentKind.NATIVE,
     intervention: InterventionKind = InterventionKind.BASELINE,
 ) -> SymbolicRunReceipt:
+    topology_hash = "1" * 64 if topology == TopologyKind.MALE_CNS else "6" * 64
+    identity_hash = "7" * 64 if identity == IdentityAssignmentKind.NATIVE else "8" * 64
     return SymbolicRunReceipt(
         run_id="run-001",
         topology_kind=topology,
         identity_assignment_kind=identity,
         intervention_kind=intervention,
         assistance=budget(),
-        connectome_or_topology_sha256="1" * 64,
+        connectome_or_topology_sha256=topology_hash,
+        identity_assignment_sha256=identity_hash,
         dynamics_artifact_sha256="2" * 64,
         decoder_artifact_sha256="3" * 64,
         output_artifact_sha256="4" * 64,
@@ -67,7 +70,7 @@ def test_assistance_budget_rejects_zero_attempt_budget():
 
 def test_receipt_requires_sha256_artifact_hashes():
     with pytest.raises(ValueError, match="sha256"):
-        replace(receipt(), output_artifact_sha256="bad")
+        replace(receipt(), identity_assignment_sha256="bad")
 
 
 def test_competence_stops_at_declared_cases_without_held_out_receipt():
@@ -104,23 +107,33 @@ def test_topology_control_requires_identical_assistance_budget():
         assert_matched_topology_control(candidate, mismatched)
 
 
-def test_topology_control_rejects_same_topology():
+def test_topology_control_rejects_same_topology_kind():
     candidate = receipt(TopologyKind.MALE_CNS)
     with pytest.raises(ValueError, match="distinct topology"):
         assert_matched_topology_control(candidate, replace(candidate, run_id="run-002"))
 
 
+def test_topology_control_requires_changed_topology_artifact():
+    candidate = receipt(TopologyKind.MALE_CNS)
+    control = receipt(TopologyKind.DEGREE_PRESERVING_REWIRE)
+    control = replace(
+        control,
+        connectome_or_topology_sha256=candidate.connectome_or_topology_sha256,
+    )
+    with pytest.raises(ValueError, match="topology artifact"):
+        assert_matched_topology_control(candidate, control)
+
+
 def test_identity_control_preserves_topology_and_assistance():
     candidate = receipt()
     control = replace(
-        candidate,
+        receipt(identity=IdentityAssignmentKind.SHUFFLED),
         run_id="identity-control",
-        identity_assignment_kind=IdentityAssignmentKind.SHUFFLED,
     )
     assert_matched_identity_control(candidate, control)
 
-    bad = replace(control, topology_kind=TopologyKind.DEGREE_PRESERVING_REWIRE)
-    with pytest.raises(ValueError, match="preserve topology"):
+    bad = replace(control, connectome_or_topology_sha256="9" * 64)
+    with pytest.raises(ValueError, match="preserve topology artifact"):
         assert_matched_identity_control(candidate, bad)
 
 
@@ -128,6 +141,17 @@ def test_identity_control_requires_distinct_identity_assignment():
     candidate = receipt()
     with pytest.raises(ValueError, match="distinct identity assignment"):
         assert_matched_identity_control(candidate, replace(candidate, run_id="same-identity"))
+
+
+def test_identity_control_requires_changed_identity_artifact():
+    candidate = receipt()
+    control = receipt(identity=IdentityAssignmentKind.SHUFFLED)
+    control = replace(
+        control,
+        identity_assignment_sha256=candidate.identity_assignment_sha256,
+    )
+    with pytest.raises(ValueError, match="identity-assignment artifact"):
+        assert_matched_identity_control(candidate, control)
 
 
 def test_alternate_initialization_changes_only_seed_coordinate():
