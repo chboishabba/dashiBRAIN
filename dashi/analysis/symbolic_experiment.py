@@ -1,7 +1,7 @@
 """Build auditable symbolic clean-room run receipts over an existing graph.
 
-This module intentionally stops at Python parsing.  It never executes emitted
-source code.  Task execution/correctness requires a separately governed
+This module intentionally stops at Python parsing. It never executes emitted
+source code. Task execution/correctness requires a separately governed
 evaluator receipt in a later tranche.
 """
 
@@ -134,9 +134,10 @@ def run_symbolic_arm(
     if len(identity_assignment) != carrier.adjacency.shape[0]:
         raise ValueError("identity assignment must align with graph carrier")
 
+    identities = [str(identity) for identity in identity_assignment]
     assistance = AssistanceBudget(**dict(assistance_overrides))
-    initial = initial_state_from_active_ids(identity_assignment, active_ids)
-    decoder = decoder_from_identity_assignment(identity_assignment, token_by_identity)
+    initial = initial_state_from_active_ids(identities, active_ids)
+    decoder = decoder_from_identity_assignment(identities, token_by_identity)
     trace = run_kernel_symbolic_trace(
         carrier,
         initial,
@@ -163,6 +164,7 @@ def run_symbolic_arm(
         intervention_kind=InterventionKind.BASELINE,
         assistance=assistance,
         connectome_or_topology_sha256=sha256_sparse_csr(carrier.adjacency),
+        identity_assignment_sha256=sha256_json(identities),
         dynamics_artifact_sha256=sha256_json(_kernel_params_payload(params, steps=steps)),
         decoder_artifact_sha256=sha256_json(decoder_payload),
         output_artifact_sha256=sha256_text(emitted),
