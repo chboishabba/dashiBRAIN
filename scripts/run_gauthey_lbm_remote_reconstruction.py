@@ -24,8 +24,10 @@ import argparse
 import csv
 import gc
 from hashlib import sha256
+import http.client
 import json
 from pathlib import Path
+import urllib.error
 import zipfile
 
 import numpy as np
@@ -42,10 +44,12 @@ from dashi.analysis.gauthey_lbm_experiment import (
 )
 from dashi.io.gauthey_lbm_identity_receipts import (
     LBMExactIdentity,
+    LBMTransportInterruption,
     checkpoint_trial_identity_receipt,
+    write_transport_interruption_receipt,
 )
 from dashi.io.out_of_core_numpy_pickle import load_numpy_pickle_out_of_core
-from dashi.io.remote_zip import list_remote_zip, stream_remote_member_to_file
+from dashi.io.remote_zip import HTTPRangeError, list_remote_zip, stream_remote_member_to_file
 
 SOURCE_STEMS = (
     "GCaMP6f_04032024_a2_r1",
@@ -276,12 +280,43 @@ def main() -> None:
                     f"({member.compressed_size / 1e9:.2f} GB compressed -> "
                     f"{member.uncompressed_size / 1e9:.2f} GB inner ZIP)"
                 )
-                stream_remote_member_to_file(
-                    args.url,
-                    member,
-                    tmp_zip,
-                    compressed_chunk_bytes=args.chunk_mib << 20,
-                )
+                try:
+                    stream_remote_member_to_file(
+                        args.url,
+                        member,
+                        tmp_zip,
+                        compressed_chunk_bytes=args.chunk_mib << 20,
+                    )
+                except (
+                    urllib.error.HTTPError,
+                    urllib.error.URLError,
+                    TimeoutError,
+                    ConnectionError,
+                    http.client.HTTPException,
+                    HTTPRangeError,
+                ) as exc:
+                    sidecar = tmp_zip.with_name(tmp_zip.name + ".compressed.part")
+                    persisted = sidecar.stat().st_size if sidecar.exists() else 0
+                    receipt_path = (
+                        trial_receipt_dir
+                        / f"gauthey_lbm_transport_interruption_{trial_id}.json"
+                    )
+                    write_transport_interruption_receipt(
+                        LBMTransportInterruption(
+                            trial_id=trial_id,
+                            source_member=member_name,
+                            compressed_bytes_persisted=persisted,
+                            partial_path=str(sidecar),
+                            failure_kind=f"{type(exc).__name__}: {exc}",
+                            resumable=sidecar.exists(),
+                        ),
+                        receipt_path,
+                    )
+                    print(
+                        f"[{trial_id}] transport interrupted after {persisted} compressed bytes; "
+                        f"resume receipt: {receipt_path}"
+                    )
+                    raise
 
         rows, corrs, traces = _local_candidates_from_inner_zip(
             tmp_zip,
