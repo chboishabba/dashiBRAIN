@@ -57,6 +57,18 @@ class LBMTrialIdentityCheckpoint:
     remote_archive_accessed: bool
 
 
+@dataclass(frozen=True)
+class LBMTransportInterruption:
+    """External acquisition interruption before a trial has been searched."""
+
+    trial_id: str
+    source_member: str
+    compressed_bytes_persisted: int
+    partial_path: str
+    failure_kind: str
+    resumable: bool
+
+
 def _validate_identity(identity: LBMExactIdentity) -> None:
     if not (0 <= identity.selected_row < LBM_EXPECTED_SELECTED):
         raise ValueError(f"selected_row outside deposited carrier: {identity.selected_row}")
@@ -169,6 +181,38 @@ def write_identity_csv(accumulator: LBMIdentityAccumulator, path: str | Path) ->
                 identity.cluster_index,
                 f"{identity.correlation:.17g}",
             ])
+
+
+def write_transport_interruption_receipt(
+    interruption: LBMTransportInterruption,
+    path: str | Path,
+) -> Path:
+    """Persist transport debt without promoting the trial to searched state."""
+    if interruption.trial_id not in LBM_TRIALS:
+        raise ValueError(f"unknown LBM trial_id: {interruption.trial_id}")
+    if interruption.compressed_bytes_persisted < 0:
+        raise ValueError("compressed_bytes_persisted must be non-negative")
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "status": "gauthey_lbm_transport_interruption",
+        "trial_id": interruption.trial_id,
+        "source_member": interruption.source_member,
+        "compressed_bytes_persisted": interruption.compressed_bytes_persisted,
+        "partial_path": interruption.partial_path,
+        "failure_kind": interruption.failure_kind,
+        "resumable": bool(interruption.resumable),
+        "searched": False,
+        "exact_deposited_matches": None,
+        "firewalls": {
+            "transport_interruption_means_searched_zero": False,
+            "transport_interruption_changes_identity_payment": False,
+            "transport_interruption_means_source_missing": False,
+            "resume_cursor_may_be_discarded_without_explicit_reset": False,
+        },
+    }
+    target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return target
 
 
 def checkpoint_trial_identity_receipt(
