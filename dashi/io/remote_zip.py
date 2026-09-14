@@ -215,10 +215,21 @@ def stream_remote_member_to_file(
     *,
     compressed_chunk_bytes: int = 8 << 20,
     resume: bool = True,
+    request_max_attempts: int = 12,
+    request_retry_base_seconds: float = 2.0,
+    request_retry_cap_seconds: float = 120.0,
+    request_timeout_seconds: float = 180.0,
 ) -> Path:
-    """Stream one remote member with exact compressed-byte resume and CRC checking."""
+    """Stream one remote member with exact compressed-byte resume and CRC checking.
+
+    Long scientific-member transfers use a larger retry budget than metadata
+    range requests.  A failed chunk never advances the sidecar cursor, so a
+    later invocation resumes from the last fully persisted compressed byte.
+    """
     if compressed_chunk_bytes <= 0:
         raise ValueError("compressed_chunk_bytes must be positive")
+    if request_max_attempts < 1:
+        raise ValueError("request_max_attempts must be >= 1")
     payload_start, payload_end = _payload_bounds(url, member)
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -239,7 +250,15 @@ def stream_remote_member_to_file(
     with sidecar.open(mode) as handle:
         while cursor <= payload_end:
             end = min(payload_end, cursor + compressed_chunk_bytes - 1)
-            chunk, _ = _request(url, cursor, end)
+            chunk, _ = _request(
+                url,
+                cursor,
+                end,
+                max_attempts=request_max_attempts,
+                retry_base_seconds=request_retry_base_seconds,
+                retry_cap_seconds=request_retry_cap_seconds,
+                timeout_seconds=request_timeout_seconds,
+            )
             expected = end - cursor + 1
             if len(chunk) != expected:
                 raise HTTPRangeError(f"short range read for {member.name} at {cursor}")
