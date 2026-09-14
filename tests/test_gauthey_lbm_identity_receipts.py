@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from dashi.analysis.gauthey_lbm_experiment import LBM_EXPECTED_SELECTED, LBM_TRIALS
 from dashi.io.gauthey_lbm_identity_receipts import (
     LBMExactIdentity,
+    LBMTransportInterruption,
     merge_exact_identities,
+    write_transport_interruption_receipt,
 )
 
 
@@ -55,3 +60,26 @@ def test_trial_cannot_be_searched_and_missing():
             searched_trials=(LBM_TRIALS[0],),
             missing_source_trials=(LBM_TRIALS[0],),
         )
+
+
+def test_transport_interruption_receipt_preserves_unsearched_state_and_resume_byte(tmp_path: Path):
+    trial = "04192024_6f_a1_r2"
+    receipt = LBMTransportInterruption(
+        trial_id=trial,
+        source_member="Data/Dffs/Aligned/GCaMP6f_04192024_a1_r2.zip",
+        compressed_bytes_persisted=3_279_945_728,
+        partial_path="data/gauthey_lbm/scratch/GCaMP6f_04192024_a1_r2.zip.compressed.part",
+        failure_kind="HTTP 504 Gateway Time-out",
+        resumable=True,
+    )
+    target = tmp_path / "transport.json"
+    write_transport_interruption_receipt(receipt, target)
+
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    assert payload["trial_id"] == trial
+    assert payload["compressed_bytes_persisted"] == 3_279_945_728
+    assert payload["resumable"] is True
+    assert payload["searched"] is False
+    assert payload["exact_deposited_matches"] is None
+    assert payload["firewalls"]["transport_interruption_means_searched_zero"] is False
+    assert payload["firewalls"]["transport_interruption_changes_identity_payment"] is False
