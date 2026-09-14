@@ -9,6 +9,11 @@ receipt, and only then advances to the next trial.
 
 This failure geometry is intentional: a later network, disk, or memory failure
 must not roll back identities already paid by an earlier completed trial.
+
+If an accumulated receipt already exists in ``--output-dir``, it is authoritative
+for resume: both its merged identity CSV and its searched-trial list are reused.
+This preserves searched-zero trials, which cannot be reconstructed from positive
+identity rows alone.
 """
 
 from __future__ import annotations
@@ -38,6 +43,39 @@ SOURCE_STEMS = (
 SOURCE_CONTAINER_MEMBERS = tuple(f"Data/Dffs/Aligned/{stem}.zip" for stem in SOURCE_STEMS)
 
 
+def _resolve_resume_seed(
+    *,
+    out: Path,
+    cli_seed_identity: str,
+    cli_seed_searched: tuple[str, ...],
+) -> tuple[Path, tuple[str, ...]]:
+    """Prefer a durable accumulated receipt over historical CLI seed state."""
+    summary_path = out / "gauthey_lbm_remaining_identity_recovery.json"
+    if not summary_path.is_file():
+        return Path(cli_seed_identity), tuple(cli_seed_searched)
+
+    payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    identity_raw = payload.get("identity_output")
+    searched_raw = payload.get("searched_trials")
+    if not isinstance(identity_raw, str) or not isinstance(searched_raw, list):
+        raise RuntimeError(f"existing accumulation receipt is malformed: {summary_path}")
+
+    identity_path = Path(identity_raw)
+    if not identity_path.is_file():
+        raise RuntimeError(
+            "existing accumulation receipt points to missing identity CSV: "
+            f"{identity_path}"
+        )
+
+    searched = tuple(str(trial) for trial in searched_raw)
+    unknown = set(searched) - set(LBM_TRIALS)
+    if unknown:
+        raise RuntimeError(
+            f"existing accumulation receipt contains unknown searched trials: {sorted(unknown)}"
+        )
+    return identity_path, searched
+
+
 def _write_accumulated_receipt(
     *,
     out: Path,
@@ -63,6 +101,7 @@ def _write_accumulated_receipt(
     payload = {
         "status": "gauthey_lbm_resumed_exact_source_identity_recovery",
         "incremental_trial_checkpointing": True,
+        "resume_from_accumulated_receipt": True,
         "seed_identity_receipt": str(Path(seed_identity_receipt)),
         "seed_searched_trials": list(seed_searched_trials),
         "remaining_trials": remaining_trials,
@@ -99,7 +138,7 @@ def main() -> None:
         action="append",
         default=[],
         choices=LBM_TRIALS,
-        help="Trial(s) already searched to produce the seed receipt. If omitted, positive-count seed trials are used.",
+        help="Trial(s) already searched to produce the seed receipt. Existing accumulated receipt state takes precedence on resume.",
     )
     parser.add_argument(
         "--deposited-selected",
@@ -121,9 +160,18 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    seed = load_identity_csv(args.seed_identities)
-    seed_positive_trials = tuple(dict.fromkeys(row.trial_id for row in seed))
-    seed_searched = tuple(args.seed_searched_trial or seed_positive_trials)
+    out = Path(args.output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    cli_seed = load_identity_csv(args.seed_identities)
+    cli_positive_trials = tuple(dict.fromkeys(row.trial_id for row in cli_seed))
+    cli_searched = tuple(args.seed_searched_trial or cli_positive_trials)
+    seed_path, seed_searched = _resolve_resume_seed(
+        out=out,
+        cli_seed_identity=args.seed_identities,
+        cli_seed_searched=cli_searched,
+    )
+    seed = load_identity_csv(seed_path)
 
     remote_names = {member.name for member in list_remote_zip(args.url)}
     present = {
@@ -135,8 +183,6 @@ def main() -> None:
     available_remaining = [trial for trial in remaining if present[trial]]
     missing_remaining = [trial for trial in remaining if not present[trial]]
 
-    out = Path(args.output_dir)
-    out.mkdir(parents=True, exist_ok=True)
     trial_root = out / "trial_recovery"
     trial_root.mkdir(parents=True, exist_ok=True)
     scratch = Path(args.scratch_dir)
@@ -148,7 +194,7 @@ def main() -> None:
 
     _write_accumulated_receipt(
         out=out,
-        seed_identity_receipt=args.seed_identities,
+        seed_identity_receipt=str(seed_path),
         seed_searched_trials=seed_searched,
         remaining_trials=remaining,
         available_remaining_trials=available_remaining,
@@ -205,10 +251,9 @@ def main() -> None:
         searched.append(trial)
         completed_trial_receipts.append(str(checkpoint_summary))
 
-        # Persist the merged scientific state before considering source-cache release.
         _write_accumulated_receipt(
             out=out,
-            seed_identity_receipt=args.seed_identities,
+            seed_identity_receipt=str(seed_path),
             seed_searched_trials=seed_searched,
             remaining_trials=remaining,
             available_remaining_trials=available_remaining,
@@ -224,10 +269,9 @@ def main() -> None:
             if source_zip.exists():
                 source_zip.unlink()
                 released_source_zips.append(str(source_zip))
-                # Rewrite once more so cache release itself is auditable.
                 _write_accumulated_receipt(
                     out=out,
-                    seed_identity_receipt=args.seed_identities,
+                    seed_identity_receipt=str(seed_path),
                     seed_searched_trials=seed_searched,
                     remaining_trials=remaining,
                     available_remaining_trials=available_remaining,
