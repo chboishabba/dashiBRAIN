@@ -47,6 +47,29 @@ class AtlasRegistrationFrontier:
     note: str
 
 
+@dataclass(frozen=True)
+class PublicRawAcquisitionFrontier:
+    """Public-source boundary for non-discovery same-trial anatomy/raw access.
+
+    Generic repository capabilities and historical internal filesystem paths are
+    retained as discovery metadata only. Neither is promoted into a public
+    dataset-specific access receipt.
+    """
+
+    representative_raw_public: bool
+    all_trial_preprocessed_public: bool
+    princeton_mirror_public: bool
+    pdc_large_deposits_may_use_globus: bool
+    historical_internal_storage_namespace_observed: bool
+    historical_internal_storage_root: str
+    public_non_discovery_raw_route_found: bool
+    public_non_discovery_anatomy_route_found: bool
+    dataset_specific_public_globus_endpoint_found: bool
+    internal_path_is_public_access_receipt: bool
+    next_payment_route: PaymentRoute
+    note: str
+
+
 def classify_deposit_source_resolution(payload: Mapping[str, object]) -> DepositRecoveryFrontier:
     """Classify the output of ``resolve_gauthey_2p_sources.py``.
 
@@ -140,5 +163,38 @@ def canonical_public_atlas_registration_frontier() -> AtlasRegistrationFrontier:
         payment_b_route=PaymentRoute.SOURCE_IMPLEMENTATION_REQUIRED,
         note=(
             "Public launcher exists, but the referenced tiff_to_local_atlas.py implementation is not source-owned in the audited public repository; do not infer an executable trial->atlas transform from the launcher alone."
+        ),
+    )
+
+
+def canonical_public_raw_acquisition_frontier() -> PublicRawAcquisitionFrontier:
+    """Pinned public-source audit for the current replication wall.
+
+    The paper advertises raw data for one representative trial and preprocessed
+    data for all trials, with Princeton Data Commons as another public location
+    for the deposited material. Princeton Data Commons supports Globus for large
+    deposits in general, but the current audit did not locate a dataset-specific
+    public Globus endpoint, non-discovery raw TIFF carrier, anatomical/reference
+    volume, or saved transform.
+
+    Historical ``lightbead-analysis`` commits preserve Princeton HPC namespaces
+    including ``/scratch/gpfs/albertl/rigE_data/`` and trial-like internal paths.
+    Those strings establish historical processing provenance only; they are not
+    publicly routable object identifiers or access authority.
+    """
+    return PublicRawAcquisitionFrontier(
+        representative_raw_public=True,
+        all_trial_preprocessed_public=True,
+        princeton_mirror_public=True,
+        pdc_large_deposits_may_use_globus=True,
+        historical_internal_storage_namespace_observed=True,
+        historical_internal_storage_root="/scratch/gpfs/albertl/rigE_data/",
+        public_non_discovery_raw_route_found=False,
+        public_non_discovery_anatomy_route_found=False,
+        dataset_specific_public_globus_endpoint_found=False,
+        internal_path_is_public_access_receipt=False,
+        next_payment_route=PaymentRoute.EXTERNAL_SCIENTIFIC_RECEIPT,
+        note=(
+            "Current public audit found no dataset-specific route from the paper, Zenodo/Princeton deposits, indexed Google-hosted objects, or published repository history to non-discovery raw/anatomical bytes or an executed same-trial transform. This is a bounded search result, not proof that such files do not exist privately or unindexed."
         ),
     )
