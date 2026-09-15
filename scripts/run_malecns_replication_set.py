@@ -20,6 +20,7 @@ from pathlib import Path
 import numpy as np
 
 from dashi.analysis.frozen_structural_latent_encoder import (
+    assert_frozen_encoder_matches_structural_family,
     load_frozen_structural_loro_encoder,
 )
 from dashi.analysis.malecns_replication import (
@@ -148,6 +149,10 @@ def main() -> None:
             raise ValueError(
                 "persisted latent encoder region carrier differs from replication manifest"
             )
+        assert_frozen_encoder_matches_structural_family(
+            latent_encoder,
+            full_ndim_family,
+        )
 
     replicates: list[ReplicateFunctionalInput] = []
     for spec in replicate_specs:
@@ -207,6 +212,8 @@ def main() -> None:
             "artifact_path": str(args.latent_encoder),
             "common_max_dimension": latent_encoder.common_max_dimension,
             "correlation_threshold": latent_encoder.correlation_threshold,
+            "structural_carrier_sha256": latent_encoder.structural_carrier_sha256,
+            "structural_carrier_match_verified": True,
             "functional_outcomes_used_to_fit_encoder": (
                 latent_encoder.functional_outcomes_used_to_fit_encoder
             ),
@@ -250,6 +257,7 @@ def main() -> None:
             "within_replicate_loro_coefficients_are_fitted": True,
             "representation_reselection_allowed": False,
             "latent_encoder_refit_on_replicate": False,
+            "region_vocabulary_equality_alone_authorizes_latent_reuse": False,
             "pooled_recording_counts_as_independent_replication": False,
             "replication_implies_mechanism": False,
             "single_animal_or_recording_set_implies_population_generalization": False,
