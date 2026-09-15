@@ -1,25 +1,13 @@
-"""Independent-recording replication for the MaleCNS structure/function carrier.
+"""Independent-recording replication for frozen MaleCNS representations.
 
-The representation search is frozen before this module is entered.  A replicate
-supplies only a new region-resolved functional recording (plus its overlap
-geometry); the MaleCNS structural carrier and candidate representation family
-are held fixed.
+The representation search is frozen before this module is entered. A replicate
+supplies only a new region-resolved functional recording plus its overlap
+geometry. Named structural candidates and, optionally, a persisted structural
+latent encoder are held fixed.
 
-This module deliberately distinguishes:
-
-* representation replication: the same named structural candidates are scored;
-* coefficient fitting inside each LORO training fold: still permitted;
-* representation reselection/compression: forbidden here;
-* pooled or re-used functional recordings: not independent replication.
-
-The canonical candidate family after the single-session search is
-
-    D^T   absolute/density-like unsigned reverse
-    P^T   row-relative unsigned wiring shape
-    S^T   full coarse signed reverse
-    (m P)^T  polarity-free, scale-free sender-gain candidate
-
-where m_i = |sum_j S_ij| / sum_j |D_ij|.
+Coefficient fitting inside each replicate's LORO training folds remains allowed;
+representation reselection, latent-encoder refitting, pooled-recording promotion,
+and population-generalization claims remain forbidden here.
 """
 
 from __future__ import annotations
@@ -29,14 +17,20 @@ from typing import Mapping, Sequence
 
 import numpy as np
 
+from dashi.analysis.frozen_structural_latent_encoder import (
+    FrozenStructuralLOROEncoder,
+    evaluate_frozen_overlap_controlled_latent_ladder,
+)
 from dashi.analysis.gauthey_lbm_experiment import published_lbm_stimulus_regressor
 from dashi.analysis.network_scale_shape_discriminator import decompose_network_scale_shape
+from dashi.analysis.ndim_structure_function import StructuralFibreFamily
 from dashi.analysis.sender_magnitude_shape_composition import compose_sender_magnitude_shape
 from dashi.analysis.signed_fibre_discriminator import singleton_family
 from dashi.analysis.overlap_controlled_structure_function import (
     evaluate_overlap_controlled_leave_one_region_out,
 )
 from dashi.analysis.stimulus_controlled_functional import residualize_region_traces_against_stimulus
+from dashi.analysis.structural_latent_ladder import StructuralLatentLadderResult
 from dashi.analysis.structure_function_real import functional_correlation
 from dashi.io.region_functional_adapter import RegionFunctionalProducer
 
@@ -106,6 +100,16 @@ class ReplicateScore:
 
 
 @dataclass(frozen=True)
+class ReplicateFrozenLatentScore:
+    replicate_id: str
+    source_identifier: str
+    atlas_identifier: str
+    timepoint_count: int
+    ladder: StructuralLatentLadderResult
+    encoder_reselected_for_replicate: bool = False
+
+
+@dataclass(frozen=True)
 class ReplicationSummary:
     scores: tuple[ReplicateScore, ...]
 
@@ -149,20 +153,28 @@ def frozen_candidate_matrices(carrier: FrozenStructuralCarrier) -> Mapping[str, 
     }
 
 
+def replicate_functional_target(
+    replicate: ReplicateFunctionalInput,
+    regions: tuple[str, ...],
+) -> np.ndarray:
+    """Validate one independent recording and derive its stimulus-controlled FC target."""
+    replicate.validate(regions)
+    traces = np.asarray(replicate.producer.traces.traces, dtype=float)
+    stimulus = published_lbm_stimulus_regressor(traces.shape[0])
+    stim = residualize_region_traces_against_stimulus(traces, stimulus)
+    return functional_correlation(stim.residual_traces, regions).matrix
+
+
 def evaluate_independent_replicate(
     carrier: FrozenStructuralCarrier,
     replicate: ReplicateFunctionalInput,
     *,
     correlation_threshold: float = 0.98,
 ) -> ReplicateScore:
-    """Score one independent recording with a frozen representation family."""
+    """Score one independent recording with a frozen named representation family."""
     carrier.validate()
-    replicate.validate(carrier.regions)
-
+    observed = replicate_functional_target(replicate, carrier.regions)
     traces = np.asarray(replicate.producer.traces.traces, dtype=float)
-    stimulus = published_lbm_stimulus_regressor(traces.shape[0])
-    stim = residualize_region_traces_against_stimulus(traces, stimulus)
-    observed = functional_correlation(stim.residual_traces, carrier.regions).matrix
     kernel = np.asarray(replicate.overlap_kernel, dtype=float)
     matrices = frozen_candidate_matrices(carrier)
 
@@ -184,6 +196,38 @@ def evaluate_independent_replicate(
         residual_relative_shape_reverse=score("relative_shape_reverse"),
         residual_signed_reverse=score("signed_reverse"),
         residual_magnitude_shape_reverse=score("magnitude_shape_reverse"),
+    )
+
+
+def evaluate_frozen_latent_replicate(
+    encoder: FrozenStructuralLOROEncoder,
+    replicate: ReplicateFunctionalInput,
+    *,
+    full_reference_family: StructuralFibreFamily | None = None,
+) -> ReplicateFrozenLatentScore:
+    """Score an independent recording with one already-frozen structural encoder."""
+    if tuple(replicate.producer.traces.unit_ids) != encoder.regions:
+        # Use a latent-specific error before the generic replicate validation so
+        # a wrong encoder artifact is distinguishable from manifest drift.
+        raise ValueError("replicate does not match frozen latent encoder region carrier")
+    replicate.validate(encoder.regions)
+    if full_reference_family is not None and tuple(full_reference_family.regions) != encoder.regions:
+        raise ValueError("full reference family does not match frozen latent encoder region carrier")
+
+    observed = replicate_functional_target(replicate, encoder.regions)
+    ladder = evaluate_frozen_overlap_controlled_latent_ladder(
+        encoder,
+        observed,
+        np.asarray(replicate.overlap_kernel, dtype=float),
+        full_reference_family=full_reference_family,
+    )
+    return ReplicateFrozenLatentScore(
+        replicate_id=replicate.replicate_id,
+        source_identifier=replicate.producer.source_identifier,
+        atlas_identifier=replicate.producer.atlas_identifier,
+        timepoint_count=int(replicate.producer.traces.traces.shape[0]),
+        ladder=ladder,
+        encoder_reselected_for_replicate=False,
     )
 
 
