@@ -1,15 +1,15 @@
-"""Sparse physical region-incidence carrier for the MaleCNS benchmark.
+"""MaleCNS 26-region incidence quotient for the structure/function benchmark.
 
-The dense ordered-region-pair chart is convenient for matrix-valued consumers,
-but it is not itself the physical incidence relation.  This module extracts the
-nonzero directed regional coupling support from the real aggregated connectome
-and treats that support as the physical region-incidence carrier.
+The source-bound physical connectome is segment/synapse level.  This module does
+not redefine that raw graph.  It extracts nonzero directed support from the
+membership-aggregated 26-region structural carrier and treats the result as a
+region-level incidence quotient used to regenerate the historical NDim chart.
 
 Derived chart coordinates (two-hop, common-input/output, signed reverse, etc.)
-are then regenerated from the sparse physical carrier.  They are not copied
-from the historical eight-coordinate chart.  Exact regeneration therefore
-checks whether that chart is genuinely a derived presentation of the physical
-region incidence rather than merely a parallel table.
+are regenerated from that regional quotient rather than copied from the chart.
+Exact regeneration therefore checks whether the chart is a derived presentation
+of the regional aggregation; it does not prove that the 26-region carrier is the
+raw MaleCNS synapse hypergraph.
 """
 
 from __future__ import annotations
@@ -38,6 +38,9 @@ class MaleCNSPhysicalRegionFabric:
     regions: tuple[str, ...]
     incidences: tuple[PhysicalRegionIncidence, ...]
     source: str = "MaleCNS membership-aggregated nonzero regional coupling"
+    carrier_level: str = "region_aggregation"
+    raw_segment_incidence: bool = False
+    upstream_source_key: str = "full_connection_graph"
 
     @property
     def incidence_count(self) -> int:
@@ -59,12 +62,12 @@ def physical_region_fabric_from_structural(
     *,
     atol: float = 0.0,
 ) -> MaleCNSPhysicalRegionFabric:
-    """Extract nonzero directed regional support from the real direct carrier.
+    """Extract nonzero directed support from the region-aggregated direct carrier.
 
-    ``atol`` is intentionally explicit.  The default keeps every numerically
-    nonzero aggregated regional relation.  A signed value is metadata on that
-    already-present physical relation; it does not create a relation when the
-    unsigned direct carrier is zero.
+    ``atol`` is intentionally explicit. The default keeps every numerically
+    nonzero aggregated regional relation. A signed value is metadata on that
+    already-present regional relation; it does not create one when the unsigned
+    direct carrier is zero.
     """
     if atol < 0:
         raise ValueError("atol must be >= 0")
@@ -99,10 +102,10 @@ def physical_region_fabric_from_structural(
 def structural_from_physical_region_fabric(
     fabric: MaleCNSPhysicalRegionFabric,
 ) -> RegionStructuralFeatures:
-    """Regenerate the canonical structural matrices from sparse incidence.
+    """Regenerate canonical structural matrices from the regional quotient.
 
-    Direct and signed-direct matrices are reconstructed from physical edge
-    support.  Two-hop is recomputed using the canonical production rule from
+    Direct and signed-direct matrices are reconstructed from regional support.
+    Two-hop is recomputed using the canonical production rule from
     ``aggregate_connectome_by_membership``: row-normalise direct by absolute
     row mass, then square the resulting transition matrix.
     """
@@ -118,10 +121,10 @@ def structural_from_physical_region_fabric(
     seen: set[tuple[str, str]] = set()
     for edge in fabric.incidences:
         if edge.source not in index or edge.target not in index:
-            raise KeyError("physical incidence references unknown region")
+            raise KeyError("regional incidence references unknown region")
         key = (edge.source, edge.target)
         if key in seen:
-            raise ValueError(f"duplicate physical incidence: {key}")
+            raise ValueError(f"duplicate regional incidence: {key}")
         seen.add(key)
         i, j = index[edge.source], index[edge.target]
         direct[i, j] = float(edge.direct_weight)
@@ -139,17 +142,17 @@ def structural_from_physical_region_fabric(
 def ndim_chart_from_physical_region_fabric(
     fabric: MaleCNSPhysicalRegionFabric,
 ) -> StructuralFibreFamily:
-    """Generate the historical NDim chart from sparse physical incidence."""
+    """Generate the historical NDim chart from the regional incidence quotient."""
     return build_ndim_structural_fibres(structural_from_physical_region_fabric(fabric))
 
 
 def physical_incidence_chart_round_trip_exact(
     structural: RegionStructuralFeatures,
 ) -> bool:
-    """Check physical-support extraction -> chart generation against canonical chart."""
+    """Check regional-support extraction -> chart generation against canonical chart."""
     expected = build_ndim_structural_fibres(structural)
-    physical = physical_region_fabric_from_structural(structural)
-    regenerated = ndim_chart_from_physical_region_fabric(physical)
+    regional = physical_region_fabric_from_structural(structural)
+    regenerated = ndim_chart_from_physical_region_fabric(regional)
     if tuple(expected.fibres) != tuple(regenerated.fibres):
         return False
     return all(
