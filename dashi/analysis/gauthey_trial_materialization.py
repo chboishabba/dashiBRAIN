@@ -1,14 +1,18 @@
 """Trial-wise materialization coordinates for Gauthey LBM replication.
 
 The deposited selected functional carrier is pooled across six LBM recordings.
-The selected-row reconstruction already recovers the exact source trial, plane,
-and cluster for each retained row, while the deposit exposes one segmentation
-artifact per trial.  Therefore trial-native functional fields can be built for
-all six recordings without asserting a common-atlas registration.
+Exact source-trace recovery supplies trial/plane/cluster coordinates for retained
+rows, while the deposit exposes one segmentation artifact per trial. Therefore
+trial-native functional fields can be built without asserting common-atlas
+registration.
 
-Common-atlas replication is a later gate.  A trial is registration-ready only
-when a same-trial anatomical image/transform route is explicitly supplied; a
-mean brain from another recording must never be silently reused.
+Common-atlas replication is a later gate. The upstream signal-extraction code
+creates a trial mean brain from that trial's raw TIFFs, and local-atlas creation
+likewise starts from structural TIFFs (or motion-corrected volumes produced by
+that same route). The public source repository describes raw data for a
+representative trial and preprocessed data for all trials. Thus a preprocessed
+functional carrier alone does not pay same-trial anatomy for a non-discovery
+recording.
 """
 
 from __future__ import annotations
@@ -26,6 +30,36 @@ from dashi.analysis.gauthey_lbm_native_field import RecoveredSelectedROI
 
 
 @dataclass(frozen=True)
+class GautheyPublicAnatomyBoundary:
+    source_repository: str
+    representative_raw_data_doi: str
+    preprocessed_data_doi: str
+    mean_brain_generator: str
+    local_atlas_generator: str
+    mean_brain_generated_from_raw_tiffs: bool
+    local_atlas_generated_from_structural_tiffs_or_same_route_volumes: bool
+    public_raw_data_scope: str
+    public_preprocessed_data_scope: str
+    preprocessed_functional_carrier_pays_same_trial_anatomy: bool
+    non_discovery_common_atlas_registration_paid: bool
+
+
+GAUTHEY_PUBLIC_ANATOMY_BOUNDARY = GautheyPublicAnatomyBoundary(
+    source_repository="github.com/murthylab/lightbead-analysis",
+    representative_raw_data_doi="10.5281/zenodo.17613016",
+    preprocessed_data_doi="10.5281/zenodo.17618684",
+    mean_brain_generator="dellaserver_processing/tiff_to_dff_mean_brain_RigE.py",
+    local_atlas_generator="dellaserver_processing/tiff_to_local_atlas.py",
+    mean_brain_generated_from_raw_tiffs=True,
+    local_atlas_generated_from_structural_tiffs_or_same_route_volumes=True,
+    public_raw_data_scope="representative_trial",
+    public_preprocessed_data_scope="all_trials",
+    preprocessed_functional_carrier_pays_same_trial_anatomy=False,
+    non_discovery_common_atlas_registration_paid=False,
+)
+
+
+@dataclass(frozen=True)
 class GautheyTrialMaterializationSpec:
     trial_id: str
     source_pickle_name: str
@@ -40,7 +74,7 @@ class GautheyTrialMaterializationSpec:
 
 # Only the a2_r5 mean brain is currently pinned by the compact working-set route.
 # This is an acquisition state, not a statement that other trial anatomies do not
-# exist upstream.
+# exist upstream or privately.
 _A2_R5_MEAN_BRAIN = "04032024_GCamp6f_a2_r5_w3_mean_G.nii"
 
 
