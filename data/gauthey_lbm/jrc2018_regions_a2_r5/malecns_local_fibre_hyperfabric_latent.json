@@ -1,0 +1,1146 @@
+{
+  "status": "real_region_level_local_fibre_hyperfabric_projection",
+  "regions": [
+    "AL",
+    "AOTU",
+    "AVLP",
+    "BU",
+    "CRE",
+    "GNG",
+    "IB",
+    "ICL",
+    "IPS",
+    "LAL",
+    "LO",
+    "PED",
+    "PLP",
+    "PRW",
+    "PVLP",
+    "SAD",
+    "SCL",
+    "SIP",
+    "SLP",
+    "SMP",
+    "SPS",
+    "VES",
+    "WED",
+    "aL",
+    "bL",
+    "gL"
+  ],
+  "region_count": 26,
+  "structural_source": {
+    "mode": "malecns_synapse_primary_neuropil_fractional_membership",
+    "source_rows": 311833243,
+    "observed_neuron_count": 164740
+  },
+  "base": {
+    "kind": "ordered region-pair localities",
+    "locality_count": 676,
+    "pair_composition_incidence_count": 16250,
+    "incidence_semantics": "(i,j)->(j,k) base composition only; no automatic fibre transport/gluing"
+  },
+  "legacy_chart": {
+    "coordinate_names": [
+      "direct_forward",
+      "direct_reverse",
+      "two_hop_forward",
+      "two_hop_reverse",
+      "common_input",
+      "common_output",
+      "signed_forward",
+      "signed_reverse"
+    ],
+    "coordinate_count": 8,
+    "local_coordinate_count_min": 8,
+    "local_coordinate_count_max": 8,
+    "matrix_round_trip_exact": true,
+    "underlying_fibre_cardinality_claim": false
+  },
+  "consumer": {
+    "description": "published-stimulus-residualized functional correlation with foldwise atlas-overlap control",
+    "original_chart_weighted_loro": 0.13639532298659035,
+    "projected_chart_weighted_loro": 0.13639532298659035,
+    "absolute_difference": 0.0,
+    "metric_semantics": "terminal consumer metrics only; lower loss does not establish representation equivalence or adequacy for other consumers"
+  },
+  "sender_gain_projection": {
+    "candidate": "magnitude sender gain m_i times row-relative wiring shape P_ij, evaluated as reverse singleton carrier",
+    "derived_only_from_hyperfabric_coordinates": [
+      "direct_forward",
+      "signed_forward"
+    ],
+    "matches_direct_composition_exactly": true,
+    "max_abs_difference_from_direct_composition": 0.0,
+    "weighted_loro": 0.13189851095808636,
+    "certified_consumer_sufficient": false,
+    "anatomical_gain_indexing_distinguished_by_current_null": false
+  },
+  "benchmark_scorecards": {
+    "legacy_chart": {
+      "candidate_name": "legacy eight-coordinate NDim chart",
+      "target_semantics": "published-stimulus-residualized functional correlation with foldwise atlas-overlap control; metrics are terminal consumer coordinates",
+      "candidate_metrics": {
+        "pair_count": 650,
+        "mae": 0.13639532298659035,
+        "r2": -0.0689875935450841,
+        "pearson_r": -0.035453698574351364,
+        "spearman_rho": -0.08040617665549323
+      },
+      "baselines": [
+        {
+          "baseline_name": "zero",
+          "baseline_metrics": {
+            "pair_count": 650,
+            "mae": 0.13196074034072647,
+            "r2": -7.953541625305149e-07,
+            "pearson_r": NaN,
+            "spearman_rho": NaN
+          },
+          "mae_absolute_improvement": -0.004434582645863883,
+          "mae_fractional_improvement": -0.033605318024237066,
+          "r2_delta": -0.06898679819092157,
+          "pearson_r_delta": NaN,
+          "spearman_rho_delta": NaN
+        },
+        {
+          "baseline_name": "fold_train_mean",
+          "baseline_metrics": {
+            "pair_count": 650,
+            "mae": 0.13196074034072644,
+            "r2": -7.953541625305149e-07,
+            "pearson_r": 0.12084491180639989,
+            "spearman_rho": 0.07884933201716869
+          },
+          "mae_absolute_improvement": -0.00443458264586391,
+          "mae_fractional_improvement": -0.03360531802423729,
+          "r2_delta": -0.06898679819092157,
+          "pearson_r_delta": -0.15629861038075127,
+          "spearman_rho_delta": -0.15925550867266192
+        },
+        {
+          "baseline_name": "direct_connectivity_bidirectional",
+          "baseline_metrics": {
+            "pair_count": 650,
+            "mae": 0.13295617551010436,
+            "r2": -0.014893342540193144,
+            "pearson_r": -0.18759589675078334,
+            "spearman_rho": -0.24132960533179232
+          },
+          "mae_absolute_improvement": -0.003439147476485993,
+          "mae_fractional_improvement": -0.02586677499778584,
+          "r2_delta": -0.05409425100489096,
+          "pearson_r_delta": 0.152142198176432,
+          "spearman_rho_delta": 0.1609234286762991
+        },
+        {
+          "baseline_name": "turner_style_direct_plus_shortest_path",
+          "baseline_metrics": {
+            "pair_count": 650,
+            "mae": 0.1399931953156748,
+            "r2": -0.11710128493719263,
+            "pearson_r": -0.016843863259800442,
+            "spearman_rho": -0.19830066052045275
+          },
+          "mae_absolute_improvement": 0.003597872329084456,
+          "mae_fractional_improvement": 0.0257003372269024,
+          "r2_delta": 0.048113691392108526,
+          "pearson_r_delta": -0.01860983531455092,
+          "spearman_rho_delta": 0.11789448386495953
+        }
+      ],
+      "complexity": {
+        "latent_dimension": null,
+        "description_length": 8.0,
+        "description_length_unit": "declared chart coordinates; not latent dimension or bits"
+      },
+      "firewalls": {
+        "consumer_sufficiency_certified": false,
+        "physical_representation_identity_certified": false
+      }
+    },
+    "sender_gain": {
+      "candidate_name": "hyperfabric-derived magnitude sender gain m_i P_ij",
+      "target_semantics": "published-stimulus-residualized functional correlation with foldwise atlas-overlap control; metrics are terminal consumer coordinates",
+      "candidate_metrics": {
+        "pair_count": 650,
+        "mae": 0.13189851095808638,
+        "r2": -0.00023912281832649818,
+        "pearson_r": 0.024992902669548712,
+        "spearman_rho": -0.1144158192818663
+      },
+      "baselines": [
+        {
+          "baseline_name": "zero",
+          "baseline_metrics": {
+            "pair_count": 650,
+            "mae": 0.13196074034072647,
+            "r2": -7.953541625305149e-07,
+            "pearson_r": NaN,
+            "spearman_rho": NaN
+          },
+          "mae_absolute_improvement": 6.222938264008326e-05,
+          "mae_fractional_improvement": 0.00047157497358233356,
+          "r2_delta": -0.00023832746416396766,
+          "pearson_r_delta": NaN,
+          "spearman_rho_delta": NaN
+        },
+        {
+          "baseline_name": "fold_train_mean",
+          "baseline_metrics": {
+            "pair_count": 650,
+            "mae": 0.13196074034072644,
+            "r2": -7.953541625305149e-07,
+            "pearson_r": 0.12084491180639989,
+            "spearman_rho": 0.07884933201716869
+          },
+          "mae_absolute_improvement": 6.222938264005551e-05,
+          "mae_fractional_improvement": 0.00047157497358212334,
+          "r2_delta": -0.00023832746416396766,
+          "pearson_r_delta": -0.09585200913685119,
+          "spearman_rho_delta": -0.193265151299035
+        },
+        {
+          "baseline_name": "direct_connectivity_bidirectional",
+          "baseline_metrics": {
+            "pair_count": 650,
+            "mae": 0.13295617551010436,
+            "r2": -0.014893342540193144,
+            "pearson_r": -0.18759589675078334,
+            "spearman_rho": -0.24132960533179232
+          },
+          "mae_absolute_improvement": 0.0010576645520179728,
+          "mae_fractional_improvement": 0.007954986279953523,
+          "r2_delta": 0.014654219721866646,
+          "pearson_r_delta": 0.21258879942033204,
+          "spearman_rho_delta": 0.12691378604992604
+        },
+        {
+          "baseline_name": "turner_style_direct_plus_shortest_path",
+          "baseline_metrics": {
+            "pair_count": 650,
+            "mae": 0.1399931953156748,
+            "r2": -0.11710128493719263,
+            "pearson_r": -0.016843863259800442,
+            "spearman_rho": -0.19830066052045275
+          },
+          "mae_absolute_improvement": 0.008094684357588422,
+          "mae_fractional_improvement": 0.05782198441385296,
+          "r2_delta": 0.11686216211886613,
+          "pearson_r_delta": 0.04183676592934915,
+          "spearman_rho_delta": 0.08388484123858646
+        },
+        {
+          "baseline_name": "legacy_full_ndim_chart",
+          "baseline_metrics": {
+            "pair_count": 650,
+            "mae": 0.13639532298659035,
+            "r2": -0.0689875935450841,
+            "pearson_r": -0.035453698574351364,
+            "spearman_rho": -0.08040617665549323
+          },
+          "mae_absolute_improvement": 0.004496812028503966,
+          "mae_fractional_improvement": 0.03296896059219031,
+          "r2_delta": 0.0687484707267576,
+          "pearson_r_delta": 0.060446601243900076,
+          "spearman_rho_delta": -0.03400964262637307
+        }
+      ],
+      "complexity": {
+        "latent_dimension": null,
+        "description_length": 1.0,
+        "description_length_unit": "declared composite matrix field; not latent dimension or bits"
+      },
+      "firewalls": {
+        "consumer_sufficiency_certified": false,
+        "physical_representation_identity_certified": false
+      }
+    },
+    "turner_style_path": {
+      "candidate_name": "Turner-style directed direct + inverse-weight shortest-path comparator",
+      "target_semantics": "published-stimulus-residualized functional correlation with foldwise atlas-overlap control; metrics are terminal consumer coordinates",
+      "candidate_metrics": {
+        "pair_count": 650,
+        "mae": 0.1399931953156748,
+        "r2": -0.11710128493719263,
+        "pearson_r": -0.016843863259800442,
+        "spearman_rho": -0.19830066052045275
+      },
+      "baselines": [
+        {
+          "baseline_name": "zero",
+          "baseline_metrics": {
+            "pair_count": 650,
+            "mae": 0.13196074034072647,
+            "r2": -7.953541625305149e-07,
+            "pearson_r": NaN,
+            "spearman_rho": NaN
+          },
+          "mae_absolute_improvement": -0.008032454974948339,
+          "mae_fractional_improvement": -0.06087003569552813,
+          "r2_delta": -0.1171004895830301,
+          "pearson_r_delta": NaN,
+          "spearman_rho_delta": NaN
+        },
+        {
+          "baseline_name": "fold_train_mean",
+          "baseline_metrics": {
+            "pair_count": 650,
+            "mae": 0.13196074034072644,
+            "r2": -7.953541625305149e-07,
+            "pearson_r": 0.12084491180639989,
+            "spearman_rho": 0.07884933201716869
+          },
+          "mae_absolute_improvement": -0.008032454974948366,
+          "mae_fractional_improvement": -0.06087003569552835,
+          "r2_delta": -0.1171004895830301,
+          "pearson_r_delta": -0.13768877506620034,
+          "spearman_rho_delta": -0.27714999253762146
+        },
+        {
+          "baseline_name": "direct_connectivity_bidirectional",
+          "baseline_metrics": {
+            "pair_count": 650,
+            "mae": 0.13295617551010436,
+            "r2": -0.014893342540193144,
+            "pearson_r": -0.18759589675078334,
+            "spearman_rho": -0.24132960533179232
+          },
+          "mae_absolute_improvement": -0.007037019805570449,
+          "mae_fractional_improvement": -0.05292736331029357,
+          "r2_delta": -0.10220794239699948,
+          "pearson_r_delta": 0.1707520334909829,
+          "spearman_rho_delta": 0.043028944811339565
+        },
+        {
+          "baseline_name": "legacy_full_ndim_chart",
+          "baseline_metrics": {
+            "pair_count": 650,
+            "mae": 0.13639532298659035,
+            "r2": -0.0689875935450841,
+            "pearson_r": -0.035453698574351364,
+            "spearman_rho": -0.08040617665549323
+          },
+          "mae_absolute_improvement": -0.003597872329084456,
+          "mae_fractional_improvement": -0.026378267599675535,
+          "r2_delta": -0.048113691392108526,
+          "pearson_r_delta": 0.01860983531455092,
+          "spearman_rho_delta": -0.11789448386495953
+        }
+      ],
+      "complexity": {
+        "latent_dimension": null,
+        "description_length": 4.0,
+        "description_length_unit": "declared comparator coordinates; not latent dimension or bits"
+      },
+      "firewalls": {
+        "consumer_sufficiency_certified": false,
+        "physical_representation_identity_certified": false
+      }
+    },
+    "baseline_protocol": {
+      "zero": "zero prediction on each fold-specific controlled target",
+      "fold_train_mean": "mean of the fold training controlled target, frozen onto held-out pairs",
+      "direct_connectivity_bidirectional": "same LORO/control fit using only direct-forward and direct-reverse structural coordinates",
+      "turner_style_direct_plus_shortest_path": "directed inverse-weight edge distance, all-pairs directed shortest-path distance, with forward/reverse coordinates; graph-distance convention adapted from Turner et al. 2021, not experiment-level reproduction",
+      "legacy_full_ndim_chart": "same LORO/control fit using the declared eight-coordinate chart"
+    }
+  },
+  "structural_latent_ladder": {
+    "target_semantics": "same overlap-controlled LORO consumer with frozen structural latent encoder",
+    "common_max_dimension": 8,
+    "full_feature_reference": {
+      "pair_count": 650,
+      "mae": 0.13639532298659035,
+      "r2": -0.0689875935450841,
+      "pearson_r": -0.035453698574351364,
+      "spearman_rho": -0.08040617665549323
+    },
+    "dimensions": [
+      {
+        "dimension": 1,
+        "metrics": {
+          "pair_count": 650,
+          "mae": 0.13251674524419724,
+          "r2": -0.008609165218152137,
+          "pearson_r": -0.19255858867125378,
+          "spearman_rho": -0.2527590943774651
+        },
+        "mean_structural_variance_fraction": 0.8267614368629784,
+        "minimum_structural_variance_fraction": 0.7940143279461926,
+        "baselines": [
+          {
+            "baseline_name": "zero",
+            "mae": 0.13196074034072647,
+            "mae_absolute_improvement": -0.0005560049034707693,
+            "mae_fractional_improvement": -0.004213411519480327,
+            "r2_delta": -0.008608369863989607,
+            "pearson_r_delta": NaN,
+            "spearman_rho_delta": NaN
+          },
+          {
+            "baseline_name": "fold_train_mean",
+            "mae": 0.13196074034072644,
+            "mae_absolute_improvement": -0.000556004903470797,
+            "mae_fractional_improvement": -0.004213411519480539,
+            "r2_delta": -0.008608369863989607,
+            "pearson_r_delta": -0.31340350047765364,
+            "spearman_rho_delta": -0.3316084263946338
+          },
+          {
+            "baseline_name": "full_selected_feature_consumer",
+            "mae": 0.13639532298659035,
+            "mae_absolute_improvement": 0.0038785777423931134,
+            "mae_fractional_improvement": 0.028436295742885805,
+            "r2_delta": 0.060378428326931965,
+            "pearson_r_delta": -0.15710489009690243,
+            "spearman_rho_delta": -0.17235291772197187
+          }
+        ],
+        "consumer_sufficiency_certified": false
+      },
+      {
+        "dimension": 2,
+        "metrics": {
+          "pair_count": 650,
+          "mae": 0.13135769753392873,
+          "r2": -0.000624195765451141,
+          "pearson_r": 0.06384497870041662,
+          "spearman_rho": 0.01718069792427365
+        },
+        "mean_structural_variance_fraction": 0.9078665348324974,
+        "minimum_structural_variance_fraction": 0.8804920758366406,
+        "baselines": [
+          {
+            "baseline_name": "zero",
+            "mae": 0.13196074034072647,
+            "mae_absolute_improvement": 0.0006030428067977378,
+            "mae_fractional_improvement": 0.0045698652890296294,
+            "r2_delta": -0.0006234004112886105,
+            "pearson_r_delta": NaN,
+            "spearman_rho_delta": NaN
+          },
+          {
+            "baseline_name": "fold_train_mean",
+            "mae": 0.13196074034072644,
+            "mae_absolute_improvement": 0.00060304280679771,
+            "mae_fractional_improvement": 0.0045698652890294195,
+            "r2_delta": -0.0006234004112886105,
+            "pearson_r_delta": -0.056999933105983266,
+            "spearman_rho_delta": -0.06166863409289504
+          },
+          {
+            "baseline_name": "full_selected_feature_consumer",
+            "mae": 0.13639532298659035,
+            "mae_absolute_improvement": 0.00503762545266162,
+            "mae_fractional_improvement": 0.036934004351138146,
+            "r2_delta": 0.06836339777963296,
+            "pearson_r_delta": 0.09929867727476799,
+            "spearman_rho_delta": 0.09758687457976688
+          }
+        ],
+        "consumer_sufficiency_certified": false
+      },
+      {
+        "dimension": 3,
+        "metrics": {
+          "pair_count": 650,
+          "mae": 0.13294117572473638,
+          "r2": -0.017747911646149195,
+          "pearson_r": 0.03232388196170003,
+          "spearman_rho": -0.030835364744604767
+        },
+        "mean_structural_variance_fraction": 0.9597934830822606,
+        "minimum_structural_variance_fraction": 0.9483473159191189,
+        "baselines": [
+          {
+            "baseline_name": "zero",
+            "mae": 0.13196074034072647,
+            "mae_absolute_improvement": -0.000980435384009909,
+            "mae_fractional_improvement": -0.007429750556706458,
+            "r2_delta": -0.017747116291986664,
+            "pearson_r_delta": NaN,
+            "spearman_rho_delta": NaN
+          },
+          {
+            "baseline_name": "fold_train_mean",
+            "mae": 0.13196074034072644,
+            "mae_absolute_improvement": -0.0009804353840099367,
+            "mae_fractional_improvement": -0.007429750556706671,
+            "r2_delta": -0.017747116291986664,
+            "pearson_r_delta": -0.08852102984469987,
+            "spearman_rho_delta": -0.10968469676177346
+          },
+          {
+            "baseline_name": "full_selected_feature_consumer",
+            "mae": 0.13639532298659035,
+            "mae_absolute_improvement": 0.0034541472618539737,
+            "mae_fractional_improvement": 0.025324528629134643,
+            "r2_delta": 0.05123968189893491,
+            "pearson_r_delta": 0.0677775805360514,
+            "spearman_rho_delta": 0.049570811910888454
+          }
+        ],
+        "consumer_sufficiency_certified": false
+      },
+      {
+        "dimension": 4,
+        "metrics": {
+          "pair_count": 650,
+          "mae": 0.13268687500107387,
+          "r2": -0.020524339188205065,
+          "pearson_r": 0.032334976391052705,
+          "spearman_rho": 0.008844321342954476
+        },
+        "mean_structural_variance_fraction": 0.9828109313902379,
+        "minimum_structural_variance_fraction": 0.9753608332176481,
+        "baselines": [
+          {
+            "baseline_name": "zero",
+            "mae": 0.13196074034072647,
+            "mae_absolute_improvement": -0.000726134660347405,
+            "mae_fractional_improvement": -0.005502656763462408,
+            "r2_delta": -0.020523543834042535,
+            "pearson_r_delta": NaN,
+            "spearman_rho_delta": NaN
+          },
+          {
+            "baseline_name": "fold_train_mean",
+            "mae": 0.13196074034072644,
+            "mae_absolute_improvement": -0.0007261346603474328,
+            "mae_fractional_improvement": -0.0055026567634626185,
+            "r2_delta": -0.020523543834042535,
+            "pearson_r_delta": -0.08850993541534719,
+            "spearman_rho_delta": -0.07000501067421422
+          },
+          {
+            "baseline_name": "full_selected_feature_consumer",
+            "mae": 0.13639532298659035,
+            "mae_absolute_improvement": 0.0037084479855164776,
+            "mae_fractional_improvement": 0.02718896736569972,
+            "r2_delta": 0.04846325435687904,
+            "pearson_r_delta": 0.06778867496540407,
+            "spearman_rho_delta": 0.0892504979984477
+          }
+        ],
+        "consumer_sufficiency_certified": false
+      },
+      {
+        "dimension": 5,
+        "metrics": {
+          "pair_count": 650,
+          "mae": 0.1336042973753295,
+          "r2": -0.029521559694867916,
+          "pearson_r": 0.01369053963569849,
+          "spearman_rho": -0.022459355843718883
+        },
+        "mean_structural_variance_fraction": 0.991916957970375,
+        "minimum_structural_variance_fraction": 0.9899249147601392,
+        "baselines": [
+          {
+            "baseline_name": "zero",
+            "mae": 0.13196074034072647,
+            "mae_absolute_improvement": -0.0016435570346030326,
+            "mae_fractional_improvement": -0.012454894011350047,
+            "r2_delta": -0.029520764340705385,
+            "pearson_r_delta": NaN,
+            "spearman_rho_delta": NaN
+          },
+          {
+            "baseline_name": "fold_train_mean",
+            "mae": 0.13196074034072644,
+            "mae_absolute_improvement": -0.0016435570346030604,
+            "mae_fractional_improvement": -0.01245489401135026,
+            "r2_delta": -0.029520764340705385,
+            "pearson_r_delta": -0.1071543721707014,
+            "spearman_rho_delta": -0.10130868786088758
+          },
+          {
+            "baseline_name": "full_selected_feature_consumer",
+            "mae": 0.13639532298659035,
+            "mae_absolute_improvement": 0.00279102561126085,
+            "mae_fractional_improvement": 0.0204627662455497,
+            "r2_delta": 0.03946603385021619,
+            "pearson_r_delta": 0.04914423821004985,
+            "spearman_rho_delta": 0.05794682081177434
+          }
+        ],
+        "consumer_sufficiency_certified": false
+      },
+      {
+        "dimension": 6,
+        "metrics": {
+          "pair_count": 650,
+          "mae": 0.13430921087029093,
+          "r2": -0.04026232467505797,
+          "pearson_r": 0.002737600736543208,
+          "spearman_rho": -0.044793675433369255
+        },
+        "mean_structural_variance_fraction": 0.9973991042928786,
+        "minimum_structural_variance_fraction": 0.9965533249550674,
+        "baselines": [
+          {
+            "baseline_name": "zero",
+            "mae": 0.13196074034072647,
+            "mae_absolute_improvement": -0.002348470529564467,
+            "mae_fractional_improvement": -0.017796736540736643,
+            "r2_delta": -0.04026152932089544,
+            "pearson_r_delta": NaN,
+            "spearman_rho_delta": NaN
+          },
+          {
+            "baseline_name": "fold_train_mean",
+            "mae": 0.13196074034072644,
+            "mae_absolute_improvement": -0.0023484705295644948,
+            "mae_fractional_improvement": -0.01779673654073686,
+            "r2_delta": -0.04026152932089544,
+            "pearson_r_delta": -0.11810731106985668,
+            "spearman_rho_delta": -0.12364300745053794
+          },
+          {
+            "baseline_name": "full_selected_feature_consumer",
+            "mae": 0.13639532298659035,
+            "mae_absolute_improvement": 0.0020861121162994156,
+            "mae_fractional_improvement": 0.015294601534867225,
+            "r2_delta": 0.028725268870026133,
+            "pearson_r_delta": 0.03819129931089457,
+            "spearman_rho_delta": 0.03561250122212397
+          }
+        ],
+        "consumer_sufficiency_certified": false
+      },
+      {
+        "dimension": 7,
+        "metrics": {
+          "pair_count": 650,
+          "mae": 0.1348211228033129,
+          "r2": -0.047425478237206775,
+          "pearson_r": -0.010626394202154615,
+          "spearman_rho": -0.05918077548476674
+        },
+        "mean_structural_variance_fraction": 0.9991623482120603,
+        "minimum_structural_variance_fraction": 0.9989316424486295,
+        "baselines": [
+          {
+            "baseline_name": "zero",
+            "mae": 0.13196074034072647,
+            "mae_absolute_improvement": -0.002860382462586436,
+            "mae_fractional_improvement": -0.02167601102570996,
+            "r2_delta": -0.047424682883044245,
+            "pearson_r_delta": NaN,
+            "spearman_rho_delta": NaN
+          },
+          {
+            "baseline_name": "fold_train_mean",
+            "mae": 0.13196074034072644,
+            "mae_absolute_improvement": -0.0028603824625864638,
+            "mae_fractional_improvement": -0.021676011025710176,
+            "r2_delta": -0.047424682883044245,
+            "pearson_r_delta": -0.1314713060085545,
+            "spearman_rho_delta": -0.13803010750193542
+          },
+          {
+            "baseline_name": "full_selected_feature_consumer",
+            "mae": 0.13639532298659035,
+            "mae_absolute_improvement": 0.0015742001832774466,
+            "mae_fractional_improvement": 0.011541452806502855,
+            "r2_delta": 0.021562115307877328,
+            "pearson_r_delta": 0.024827304372196747,
+            "spearman_rho_delta": 0.021225401170726486
+          }
+        ],
+        "consumer_sufficiency_certified": false
+      },
+      {
+        "dimension": 8,
+        "metrics": {
+          "pair_count": 650,
+          "mae": 0.13639532298659038,
+          "r2": -0.0689875935450841,
+          "pearson_r": -0.03545369857435177,
+          "spearman_rho": -0.08040617665549323
+        },
+        "mean_structural_variance_fraction": 1.0,
+        "minimum_structural_variance_fraction": 1.0,
+        "baselines": [
+          {
+            "baseline_name": "zero",
+            "mae": 0.13196074034072647,
+            "mae_absolute_improvement": -0.00443458264586391,
+            "mae_fractional_improvement": -0.033605318024237274,
+            "r2_delta": -0.06898679819092157,
+            "pearson_r_delta": NaN,
+            "spearman_rho_delta": NaN
+          },
+          {
+            "baseline_name": "fold_train_mean",
+            "mae": 0.13196074034072644,
+            "mae_absolute_improvement": -0.004434582645863938,
+            "mae_fractional_improvement": -0.033605318024237496,
+            "r2_delta": -0.06898679819092157,
+            "pearson_r_delta": -0.15629861038075166,
+            "spearman_rho_delta": -0.15925550867266192
+          },
+          {
+            "baseline_name": "full_selected_feature_consumer",
+            "mae": 0.13639532298659035,
+            "mae_absolute_improvement": -2.7755575615628914e-17,
+            "mae_fractional_improvement": -2.0349360233090756e-16,
+            "r2_delta": 0.0,
+            "pearson_r_delta": -4.0939474033052647e-16,
+            "spearman_rho_delta": 0.0
+          }
+        ],
+        "consumer_sufficiency_certified": false
+      }
+    ],
+    "fold_geometries": [
+      {
+        "held_out_region": "AL",
+        "selected_fibres": [
+          "direct_forward",
+          "direct_reverse",
+          "two_hop_forward",
+          "two_hop_reverse",
+          "common_input",
+          "common_output",
+          "signed_forward",
+          "signed_reverse"
+        ],
+        "source_dimension": 8,
+        "fit_pair_count": 300,
+        "held_out_pair_count": 25
+      },
+      {
+        "held_out_region": "AOTU",
+        "selected_fibres": [
+          "direct_forward",
+          "direct_reverse",
+          "two_hop_forward",
+          "two_hop_reverse",
+          "common_input",
+          "common_output",
+          "signed_forward",
+          "signed_reverse"
+        ],
+        "source_dimension": 8,
+        "fit_pair_count": 300,
+        "held_out_pair_count": 25
+      },
+      {
+        "held_out_region": "AVLP",
+        "selected_fibres": [
+          "direct_forward",
+          "direct_reverse",
+          "two_hop_forward",
+          "two_hop_reverse",
+          "common_input",
+          "common_output",
+          "signed_forward",
+          "signed_reverse"
+        ],
+        "source_dimension": 8,
+        "fit_pair_count": 300,
+        "held_out_pair_count": 25
+      },
+      {
+        "held_out_region": "BU",
+        "selected_fibres": [
+          "direct_forward",
+          "direct_reverse",
+          "two_hop_forward",
+          "two_hop_reverse",
+          "common_input",
+          "common_output",
+          "signed_forward",
+          "signed_reverse"
+        ],
+        "source_dimension": 8,
+        "fit_pair_count": 300,
+        "held_out_pair_count": 25
+      },
+      {
+        "held_out_region": "CRE",
+        "selected_fibres": [
+          "direct_forward",
+          "direct_reverse",
+          "two_hop_forward",
+          "two_hop_reverse",
+          "common_input",
+          "common_output",
+          "signed_forward",
+          "signed_reverse"
+        ],
+        "source_dimension": 8,
+        "fit_pair_count": 300,
+        "held_out_pair_count": 25
+      },
+      {
+        "held_out_region": "GNG",
+        "selected_fibres": [
+          "direct_forward",
+          "direct_reverse",
+          "two_hop_forward",
+          "two_hop_reverse",
+          "common_input",
+          "common_output",
+          "signed_forward",
+          "signed_reverse"
+        ],
+        "source_dimension": 8,
+        "fit_pair_count": 300,
+        "held_out_pair_count": 25
+      },
+      {
+        "held_out_region": "IB",
+        "selected_fibres": [
+          "direct_forward",
+          "direct_reverse",
+          "two_hop_forward",
+          "two_hop_reverse",
+          "common_input",
+          "common_output",
+          "signed_forward",
+          "signed_reverse"
+        ],
+        "source_dimension": 8,
+        "fit_pair_count": 300,
+        "held_out_pair_count": 25
+      },
+      {
+        "held_out_region": "ICL",
+        "selected_fibres": [
+          "direct_forward",
+          "direct_reverse",
+          "two_hop_forward",
+          "two_hop_reverse",
+          "common_input",
+          "common_output",
+          "signed_forward",
+          "signed_reverse"
+        ],
+        "source_dimension": 8,
+        "fit_pair_count": 300,
+        "held_out_pair_count": 25
+      },
+      {
+        "held_out_region": "IPS",
+        "selected_fibres": [
+          "direct_forward",
+          "direct_reverse",
+          "two_hop_forward",
+          "two_hop_reverse",
+          "common_input",
+          "common_output",
+          "signed_forward",
+          "signed_reverse"
+        ],
+        "source_dimension": 8,
+        "fit_pair_count": 300,
+        "held_out_pair_count": 25
+      },
+      {
+        "held_out_region": "LAL",
+        "selected_fibres": [
+          "direct_forward",
+          "direct_reverse",
+          "two_hop_forward",
+          "two_hop_reverse",
+          "common_input",
+          "common_output",
+          "signed_forward",
+          "signed_reverse"
+        ],
+        "source_dimension": 8,
+        "fit_pair_count": 300,
+        "held_out_pair_count": 25
+      },
+      {
+        "held_out_region": "LO",
+        "selected_fibres": [
+          "direct_forward",
+          "direct_reverse",
+          "two_hop_forward",
+          "two_hop_reverse",
+          "common_input",
+          "common_output",
+          "signed_forward",
+          "signed_reverse"
+        ],
+        "source_dimension": 8,
+        "fit_pair_count": 300,
+        "held_out_pair_count": 25
+      },
+      {
+        "held_out_region": "PED",
+        "selected_fibres": [
+          "direct_forward",
+          "direct_reverse",
+          "two_hop_forward",
+          "two_hop_reverse",
+          "common_input",
+          "common_output",
+          "signed_forward",
+          "signed_reverse"
+        ],
+        "source_dimension": 8,
+        "fit_pair_count": 300,
+        "held_out_pair_count": 25
+      },
+      {
+        "held_out_region": "PLP",
+        "selected_fibres": [
+          "direct_forward",
+          "direct_reverse",
+          "two_hop_forward",
+          "two_hop_reverse",
+          "common_input",
+          "common_output",
+          "signed_forward",
+          "signed_reverse"
+        ],
+        "source_dimension": 8,
+        "fit_pair_count": 300,
+        "held_out_pair_count": 25
+      },
+      {
+        "held_out_region": "PRW",
+        "selected_fibres": [
+          "direct_forward",
+          "direct_reverse",
+          "two_hop_forward",
+          "two_hop_reverse",
+          "common_input",
+          "common_output",
+          "signed_forward",
+          "signed_reverse"
+        ],
+        "source_dimension": 8,
+        "fit_pair_count": 300,
+        "held_out_pair_count": 25
+      },
+      {
+        "held_out_region": "PVLP",
+        "selected_fibres": [
+          "direct_forward",
+          "direct_reverse",
+          "two_hop_forward",
+          "two_hop_reverse",
+          "common_input",
+          "common_output",
+          "signed_forward",
+          "signed_reverse"
+        ],
+        "source_dimension": 8,
+        "fit_pair_count": 300,
+        "held_out_pair_count": 25
+      },
+      {
+        "held_out_region": "SAD",
+        "selected_fibres": [
+          "direct_forward",
+          "direct_reverse",
+          "two_hop_forward",
+          "two_hop_reverse",
+          "common_input",
+          "common_output",
+          "signed_forward",
+          "signed_reverse"
+        ],
+        "source_dimension": 8,
+        "fit_pair_count": 300,
+        "held_out_pair_count": 25
+      },
+      {
+        "held_out_region": "SCL",
+        "selected_fibres": [
+          "direct_forward",
+          "direct_reverse",
+          "two_hop_forward",
+          "two_hop_reverse",
+          "common_input",
+          "common_output",
+          "signed_forward",
+          "signed_reverse"
+        ],
+        "source_dimension": 8,
+        "fit_pair_count": 300,
+        "held_out_pair_count": 25
+      },
+      {
+        "held_out_region": "SIP",
+        "selected_fibres": [
+          "direct_forward",
+          "direct_reverse",
+          "two_hop_forward",
+          "two_hop_reverse",
+          "common_input",
+          "common_output",
+          "signed_forward",
+          "signed_reverse"
+        ],
+        "source_dimension": 8,
+        "fit_pair_count": 300,
+        "held_out_pair_count": 25
+      },
+      {
+        "held_out_region": "SLP",
+        "selected_fibres": [
+          "direct_forward",
+          "direct_reverse",
+          "two_hop_forward",
+          "two_hop_reverse",
+          "common_input",
+          "common_output",
+          "signed_forward",
+          "signed_reverse"
+        ],
+        "source_dimension": 8,
+        "fit_pair_count": 300,
+        "held_out_pair_count": 25
+      },
+      {
+        "held_out_region": "SMP",
+        "selected_fibres": [
+          "direct_forward",
+          "direct_reverse",
+          "two_hop_forward",
+          "two_hop_reverse",
+          "common_input",
+          "common_output",
+          "signed_forward",
+          "signed_reverse"
+        ],
+        "source_dimension": 8,
+        "fit_pair_count": 300,
+        "held_out_pair_count": 25
+      },
+      {
+        "held_out_region": "SPS",
+        "selected_fibres": [
+          "direct_forward",
+          "direct_reverse",
+          "two_hop_forward",
+          "two_hop_reverse",
+          "common_input",
+          "common_output",
+          "signed_forward",
+          "signed_reverse"
+        ],
+        "source_dimension": 8,
+        "fit_pair_count": 300,
+        "held_out_pair_count": 25
+      },
+      {
+        "held_out_region": "VES",
+        "selected_fibres": [
+          "direct_forward",
+          "direct_reverse",
+          "two_hop_forward",
+          "two_hop_reverse",
+          "common_input",
+          "common_output",
+          "signed_forward",
+          "signed_reverse"
+        ],
+        "source_dimension": 8,
+        "fit_pair_count": 300,
+        "held_out_pair_count": 25
+      },
+      {
+        "held_out_region": "WED",
+        "selected_fibres": [
+          "direct_forward",
+          "direct_reverse",
+          "two_hop_forward",
+          "two_hop_reverse",
+          "common_input",
+          "common_output",
+          "signed_forward",
+          "signed_reverse"
+        ],
+        "source_dimension": 8,
+        "fit_pair_count": 300,
+        "held_out_pair_count": 25
+      },
+      {
+        "held_out_region": "aL",
+        "selected_fibres": [
+          "direct_forward",
+          "direct_reverse",
+          "two_hop_forward",
+          "two_hop_reverse",
+          "common_input",
+          "common_output",
+          "signed_forward",
+          "signed_reverse"
+        ],
+        "source_dimension": 8,
+        "fit_pair_count": 300,
+        "held_out_pair_count": 25
+      },
+      {
+        "held_out_region": "bL",
+        "selected_fibres": [
+          "direct_forward",
+          "direct_reverse",
+          "two_hop_forward",
+          "two_hop_reverse",
+          "common_input",
+          "common_output",
+          "signed_forward",
+          "signed_reverse"
+        ],
+        "source_dimension": 8,
+        "fit_pair_count": 300,
+        "held_out_pair_count": 25
+      },
+      {
+        "held_out_region": "gL",
+        "selected_fibres": [
+          "direct_forward",
+          "direct_reverse",
+          "two_hop_forward",
+          "two_hop_reverse",
+          "common_input",
+          "common_output",
+          "signed_forward",
+          "signed_reverse"
+        ],
+        "source_dimension": 8,
+        "fit_pair_count": 300,
+        "held_out_pair_count": 25
+      }
+    ],
+    "firewalls": {
+      "independent_trial_replication_paid": false,
+      "physical_stalk_dimension_identified": false,
+      "lowest_discovery_mae_dimension_is_universal_minimal_latent": false,
+      "pca_geometry_is_biological_mechanism": false
+    }
+  },
+  "frozen_structural_latent_encoder": {
+    "artifact_path": "data/gauthey_lbm/jrc2018_regions_a2_r5/malecns_local_fibre_hyperfabric_latent_encoder.npz",
+    "region_count": 26,
+    "common_max_dimension": 8,
+    "correlation_threshold": 0.98,
+    "functional_outcomes_used_to_fit_encoder": false,
+    "reselect_on_replicate": false
+  },
+  "firewalls": {
+    "time_is_fibre_ontology": false,
+    "hop_is_fibre_ontology": false,
+    "eight_is_global_fibre_count": false,
+    "pair_composition_implies_fibre_transport": false,
+    "crossing_implies_fusion": false,
+    "symmetry_implies_quotient_authority": false,
+    "consumer_projection_implies_physical_identity": false,
+    "sender_gain_projection_implies_sufficiency": false,
+    "lower_terminal_loss_implies_better_representation_for_all_consumers": false,
+    "declared_matrix_coordinate_count_equals_latent_dimension": false,
+    "lowest_discovery_mae_pca_dimension_is_universal_minimal_latent": false,
+    "pca_geometry_is_biological_mechanism": false,
+    "turner_style_path_comparator_is_apples_to_apples_literature_reproduction": false,
+    "frozen_structural_encoder_implies_replication_without_new_recording": false
+  }
+}
