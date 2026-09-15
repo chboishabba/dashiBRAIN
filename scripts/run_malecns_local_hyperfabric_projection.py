@@ -2,11 +2,10 @@
 """Materialise and score real MaleCNS consumer-relative structural carriers.
 
 Alongside the exact hyperfabric lift/project and sender-gain projection, this
-runner now reports terminal held-out scorecards and a training-structure-only
-latent ladder.  A Turner-style directed path comparator uses inverse unsigned
-structural weight as edge distance and all-pairs directed shortest paths; this
-imports the graph-distance convention only, not a claim of experiment-level
-comparability with Turner et al.
+runner reports terminal held-out scorecards, a literature-anchored path
+comparator, and a training-structure-only latent ladder.  The latent encoder is
+persisted as a separate artifact so later registered recordings can reuse the
+same structural means/scales/PCA components without representation reselection.
 
 Terminal loss/metric improvements never establish fibre equivalence, universal
 consumer sufficiency, physical identity, or biological mechanism.
@@ -23,6 +22,11 @@ import numpy as np
 from dashi.analysis.consumer_relative_scorecard import (
     evaluate_overlap_controlled_loro_scorecard,
     scorecard_to_dict,
+)
+from dashi.analysis.frozen_structural_latent_encoder import (
+    evaluate_frozen_overlap_controlled_latent_ladder,
+    fit_frozen_structural_loro_encoder,
+    save_frozen_structural_loro_encoder,
 )
 from dashi.analysis.gauthey_lbm_experiment import published_lbm_stimulus_regressor
 from dashi.analysis.hyperfabric_sender_gain_projection import (
@@ -44,13 +48,8 @@ from dashi.analysis.overlap_controlled_structure_function import (
     restrict_overlap_kernel,
 )
 from dashi.analysis.sender_magnitude_shape_composition import compose_sender_magnitude_shape
-from dashi.analysis.stimulus_controlled_functional import (
-    residualize_region_traces_against_stimulus,
-)
-from dashi.analysis.structural_latent_ladder import (
-    evaluate_overlap_controlled_structural_latent_ladder,
-    structural_latent_ladder_to_dict,
-)
+from dashi.analysis.stimulus_controlled_functional import residualize_region_traces_against_stimulus
+from dashi.analysis.structural_latent_ladder import structural_latent_ladder_to_dict
 from dashi.analysis.structural_path_baselines import turner_style_path_family
 from dashi.analysis.structure_function_real import (
     RegionStructuralFeatures,
@@ -73,7 +72,21 @@ def main() -> None:
     p.add_argument("--region-functional-source", required=True)
     p.add_argument("--synapse-partners", required=True)
     p.add_argument("--output", required=True)
+    p.add_argument(
+        "--latent-encoder-output",
+        help=(
+            "Optional explicit .npz path for the structure-only frozen LORO encoder. "
+            "Default: <output stem>.latent_encoder.npz"
+        ),
+    )
     args = p.parse_args()
+
+    output_path = Path(args.output)
+    latent_encoder_path = (
+        Path(args.latent_encoder_output)
+        if args.latent_encoder_output
+        else output_path.with_suffix(".latent_encoder.npz")
+    )
 
     manifest = MaleCNSManifest(base_dir=args.base_dir)
     graph = load_malecns_graph(
@@ -83,9 +96,7 @@ def main() -> None:
     )
     if not manifest.is_present("body_neurotransmitters"):
         raise RuntimeError("body_neurotransmitters is required for the signed chart")
-    signed = signed_adjacency_for_graph(
-        graph, manifest.target_path("body_neurotransmitters")
-    )
+    signed = signed_adjacency_for_graph(graph, manifest.target_path("body_neurotransmitters"))
 
     producer = load_region_functional_producer(
         args.region_functional,
@@ -131,12 +142,7 @@ def main() -> None:
         structural_common.signed_direct,
     )
     gain_round_trip_max_abs = float(
-        np.max(
-            np.abs(
-                gain_projection.magnitude_sender_shape
-                - direct_gain.magnitude_sender_shape
-            )
-        )
+        np.max(np.abs(gain_projection.magnitude_sender_shape - direct_gain.magnitude_sender_shape))
     )
     gain_family = StructuralFibreFamily(
         common,
@@ -204,11 +210,15 @@ def main() -> None:
         description_length=4.0,
         description_length_unit="declared comparator coordinates; not latent dimension or bits",
     )
-    latent_ladder = evaluate_overlap_controlled_structural_latent_ladder(
-        family,
+
+    frozen_encoder = fit_frozen_structural_loro_encoder(family)
+    latent_ladder = evaluate_frozen_overlap_controlled_latent_ladder(
+        frozen_encoder,
         functional.matrix,
         overlap_kernel,
+        full_reference_family=family,
     )
+    save_frozen_structural_loro_encoder(frozen_encoder, latent_encoder_path)
 
     local_counts = [len(coords) for coords in fabric.fibres.values()]
     payload = {
@@ -269,6 +279,16 @@ def main() -> None:
             },
         },
         "structural_latent_ladder": structural_latent_ladder_to_dict(latent_ladder),
+        "frozen_structural_latent_encoder": {
+            "artifact_path": str(latent_encoder_path),
+            "region_count": len(frozen_encoder.regions),
+            "common_max_dimension": frozen_encoder.common_max_dimension,
+            "correlation_threshold": frozen_encoder.correlation_threshold,
+            "functional_outcomes_used_to_fit_encoder": (
+                frozen_encoder.functional_outcomes_used_to_fit_encoder
+            ),
+            "reselect_on_replicate": False,
+        },
         "firewalls": {
             "time_is_fibre_ontology": False,
             "hop_is_fibre_ontology": False,
@@ -283,12 +303,12 @@ def main() -> None:
             "lowest_discovery_mae_pca_dimension_is_universal_minimal_latent": False,
             "pca_geometry_is_biological_mechanism": False,
             "turner_style_path_comparator_is_apples_to_apples_literature_reproduction": False,
+            "frozen_structural_encoder_implies_replication_without_new_recording": False,
         },
     }
 
-    out = Path(args.output)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     print(json.dumps(payload, indent=2))
 
 
