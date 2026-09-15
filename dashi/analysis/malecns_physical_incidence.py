@@ -57,6 +57,16 @@ class MaleCNSPhysicalRegionFabric:
         return float(self.incidence_count / self.possible_pair_count)
 
 
+def physical_region_source_metadata(fabric: MaleCNSPhysicalRegionFabric) -> dict[str, object]:
+    """Return the source hierarchy needed by durable regional-incidence receipts."""
+    return {
+        "carrier_level": fabric.carrier_level,
+        "raw_segment_incidence": fabric.raw_segment_incidence,
+        "upstream_source_key": fabric.upstream_source_key,
+        "region_aggregation_equals_raw_connectome": False,
+    }
+
+
 def physical_region_fabric_from_structural(
     structural: RegionStructuralFeatures,
     *,
