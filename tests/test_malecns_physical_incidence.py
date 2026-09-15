@@ -4,6 +4,7 @@ from dashi.analysis.malecns_physical_incidence import (
     ndim_chart_from_physical_region_fabric,
     physical_incidence_chart_round_trip_exact,
     physical_region_fabric_from_structural,
+    physical_region_source_metadata,
     structural_from_physical_region_fabric,
 )
 from dashi.analysis.ndim_structure_function import build_ndim_structural_fibres
@@ -50,6 +51,16 @@ def test_region_fabric_is_explicitly_an_aggregation_not_raw_segment_incidence():
     assert fabric.carrier_level == "region_aggregation"
     assert fabric.raw_segment_incidence is False
     assert fabric.upstream_source_key == "full_connection_graph"
+
+
+def test_region_source_metadata_preserves_upstream_physical_authority_boundary():
+    metadata = physical_region_source_metadata(
+        physical_region_fabric_from_structural(_structural())
+    )
+    assert metadata["carrier_level"] == "region_aggregation"
+    assert metadata["raw_segment_incidence"] is False
+    assert metadata["upstream_source_key"] == "full_connection_graph"
+    assert metadata["region_aggregation_equals_raw_connectome"] is False
 
 
 def test_sparse_physical_incidence_regenerates_structural_matrices_exactly():
