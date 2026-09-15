@@ -1,12 +1,17 @@
 import numpy as np
 import pytest
 
+from dashi.analysis.frozen_structural_latent_encoder import (
+    fit_frozen_structural_loro_encoder,
+)
 from dashi.analysis.malecns_replication import (
     FrozenStructuralCarrier,
     ReplicateFunctionalInput,
+    evaluate_frozen_latent_replicate,
     evaluate_replication_set,
     frozen_candidate_matrices,
 )
+from dashi.analysis.ndim_structure_function import StructuralFibreFamily
 from dashi.io.functional_imaging_loader import FunctionalTraceTable
 from dashi.io.region_functional_adapter import RegionFunctionalProducer
 
@@ -121,3 +126,47 @@ def test_two_independent_recordings_are_scored_without_reselection():
     assert [score.replicate_id for score in summary.scores] == ["r1", "r2"]
     assert all(np.isfinite(score.residual_absolute_reverse) for score in summary.scores)
     assert all(np.isfinite(score.residual_magnitude_shape_reverse) for score in summary.scores)
+
+
+def test_independent_replicate_can_be_scored_with_same_frozen_latent_encoder():
+    carrier = _carrier()
+    family = StructuralFibreFamily(
+        carrier.regions,
+        {
+            "direct_forward": carrier.unsigned_direct,
+            "direct_reverse": carrier.unsigned_direct.T,
+            "signed_forward": carrier.signed_direct,
+            "signed_reverse": carrier.signed_direct.T,
+        },
+    )
+    encoder = fit_frozen_structural_loro_encoder(family)
+    score = evaluate_frozen_latent_replicate(
+        encoder,
+        _replicate("r1", "source-1"),
+        full_reference_family=family,
+    )
+
+    assert score.replicate_id == "r1"
+    assert score.source_identifier == "source-1"
+    assert score.encoder_reselected_for_replicate is False
+    assert score.ladder.independent_trial_replication_paid is False
+    assert len(score.ladder.dimensions) == encoder.common_max_dimension
+    assert all(np.isfinite(x.metrics.mae) for x in score.ladder.dimensions)
+
+
+def test_frozen_latent_replicate_rejects_encoder_region_drift():
+    carrier = _carrier()
+    family = StructuralFibreFamily(
+        ("B", "A", "C", "D"),
+        {
+            "direct_forward": carrier.unsigned_direct,
+            "direct_reverse": carrier.unsigned_direct.T,
+        },
+    )
+    encoder = fit_frozen_structural_loro_encoder(family)
+
+    with pytest.raises(ValueError, match="frozen latent encoder region carrier"):
+        evaluate_frozen_latent_replicate(
+            encoder,
+            _replicate("r1", "source-1"),
+        )
