@@ -15,6 +15,7 @@ coefficients or a mechanistic dynamical model.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 from pathlib import Path
 
@@ -41,7 +42,55 @@ from dashi.analysis.structural_latent_ladder import (
 )
 
 
-ENCODER_ARTIFACT_VERSION = 1
+ENCODER_ARTIFACT_VERSION = 2
+
+
+def _hash_text(hasher: "hashlib._Hash", value: str) -> None:
+    payload = value.encode("utf-8")
+    hasher.update(len(payload).to_bytes(8, "little", signed=False))
+    hasher.update(payload)
+
+
+def structural_fibre_family_sha256(family: StructuralFibreFamily) -> str:
+    """Canonical exact-object fingerprint for one ordered structural family.
+
+    The digest includes ordered region vocabulary, ordered fibre vocabulary,
+    matrix shapes, and C-contiguous little-endian float64 bytes.  It is an
+    execution/provenance identity guard only; equality of this digest is not a
+    biological identity theorem.
+    """
+    regions = tuple(str(region) for region in family.regions)
+    if len(set(regions)) != len(regions):
+        raise ValueError("structural family regions must be unique")
+    n = len(regions)
+
+    hasher = hashlib.sha256()
+    _hash_text(hasher, "dashi.structural-fibre-family.v1")
+    hasher.update(n.to_bytes(8, "little", signed=False))
+    for region in regions:
+        _hash_text(hasher, region)
+
+    fibres = list(family.fibres.items())
+    hasher.update(len(fibres).to_bytes(8, "little", signed=False))
+    seen: set[str] = set()
+    for raw_name, raw_matrix in fibres:
+        name = str(raw_name)
+        if name in seen:
+            raise ValueError(f"duplicate structural fibre name: {name!r}")
+        seen.add(name)
+        matrix = np.asarray(raw_matrix, dtype=np.dtype("<f8"))
+        if matrix.shape != (n, n):
+            raise ValueError(
+                f"structural fibre {name!r} shape {matrix.shape} does not match {(n, n)}"
+            )
+        if not np.all(np.isfinite(matrix)):
+            raise ValueError(f"structural fibre {name!r} contains non-finite values")
+        canonical = np.ascontiguousarray(matrix, dtype=np.dtype("<f8"))
+        _hash_text(hasher, name)
+        hasher.update(canonical.shape[0].to_bytes(8, "little", signed=False))
+        hasher.update(canonical.shape[1].to_bytes(8, "little", signed=False))
+        hasher.update(canonical.tobytes(order="C"))
+    return hasher.hexdigest()
 
 
 @dataclass(frozen=True)
@@ -52,7 +101,23 @@ class FrozenStructuralLOROEncoder:
     held_latent_full_by_fold: tuple[np.ndarray, ...]
     common_max_dimension: int
     correlation_threshold: float
+    structural_carrier_sha256: str
     functional_outcomes_used_to_fit_encoder: bool = False
+
+
+def assert_frozen_encoder_matches_structural_family(
+    encoder: FrozenStructuralLOROEncoder,
+    family: StructuralFibreFamily,
+) -> None:
+    """Require exact frozen structural-carrier identity before latent reuse."""
+    if tuple(family.regions) != encoder.regions:
+        raise ValueError("structural family region carrier differs from frozen encoder")
+    observed = structural_fibre_family_sha256(family)
+    if observed != encoder.structural_carrier_sha256:
+        raise ValueError(
+            "structural carrier fingerprint differs from frozen encoder; "
+            "same region vocabulary does not authorize latent-coordinate reuse"
+        )
 
 
 def fit_frozen_structural_loro_encoder(
@@ -64,6 +129,7 @@ def fit_frozen_structural_loro_encoder(
     if n < 4:
         raise ValueError("frozen latent encoder requires at least four regions")
 
+    carrier_sha256 = structural_fibre_family_sha256(family)
     folds: list[FoldStructuralLatentGeometry] = []
     train_latents: list[np.ndarray] = []
     held_latents: list[np.ndarray] = []
@@ -88,6 +154,7 @@ def fit_frozen_structural_loro_encoder(
         held_latent_full_by_fold=tuple(held_latents),
         common_max_dimension=int(common_max_dimension),
         correlation_threshold=float(correlation_threshold),
+        structural_carrier_sha256=carrier_sha256,
         functional_outcomes_used_to_fit_encoder=False,
     )
 
@@ -99,6 +166,8 @@ def save_frozen_structural_loro_encoder(
     """Persist one frozen encoder without pickle/object-array semantics."""
     if encoder.functional_outcomes_used_to_fit_encoder:
         raise ValueError("refusing to persist encoder marked as outcome-fitted")
+    if len(encoder.structural_carrier_sha256) != 64:
+        raise ValueError("frozen encoder lacks a valid structural carrier fingerprint")
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
 
@@ -107,6 +176,7 @@ def save_frozen_structural_loro_encoder(
         "regions": list(encoder.regions),
         "common_max_dimension": int(encoder.common_max_dimension),
         "correlation_threshold": float(encoder.correlation_threshold),
+        "structural_carrier_sha256": encoder.structural_carrier_sha256,
         "functional_outcomes_used_to_fit_encoder": False,
         "folds": [
             {
@@ -151,6 +221,9 @@ def load_frozen_structural_loro_encoder(
             )
         if metadata.get("functional_outcomes_used_to_fit_encoder") is not False:
             raise ValueError("artifact does not certify structure-only encoder fitting")
+        structural_sha256 = str(metadata.get("structural_carrier_sha256", ""))
+        if len(structural_sha256) != 64:
+            raise ValueError("artifact lacks a valid structural carrier fingerprint")
 
         regions = tuple(str(x) for x in metadata["regions"])
         fold_meta = list(metadata["folds"])
@@ -230,6 +303,7 @@ def load_frozen_structural_loro_encoder(
         held_latent_full_by_fold=tuple(held_latents),
         common_max_dimension=common_max,
         correlation_threshold=float(metadata["correlation_threshold"]),
+        structural_carrier_sha256=structural_sha256,
         functional_outcomes_used_to_fit_encoder=False,
     )
 
@@ -313,8 +387,7 @@ def evaluate_frozen_overlap_controlled_latent_ladder(
     mean = np.concatenate(means)
 
     if full_reference_family is not None:
-        if tuple(full_reference_family.regions) != encoder.regions:
-            raise ValueError("full reference family does not match frozen region carrier")
+        assert_frozen_encoder_matches_structural_family(encoder, full_reference_family)
         reference_bundle = collect_overlap_controlled_loro_predictions(
             full_reference_family,
             obs,
