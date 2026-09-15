@@ -1,4 +1,5 @@
 from pathlib import Path
+import importlib.util
 
 from dashi.analysis.gauthey_lbm_experiment import LBM_TRIALS, pooled_lbm_row_to_trial_plane_cluster
 from dashi.io.gauthey_lbm_identity_receipts import (
@@ -6,6 +7,15 @@ from dashi.io.gauthey_lbm_identity_receipts import (
     checkpoint_trial_identity_receipt,
     load_identity_csv,
 )
+
+
+def _recovery_runner_module():
+    path = Path("scripts/recover_gauthey_lbm_remaining_identities.py")
+    spec = importlib.util.spec_from_file_location("remaining_identity_recovery", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _identity(selected_row: int, pooled_source_row: int) -> LBMExactIdentity:
@@ -57,4 +67,29 @@ def test_checkpoint_rejects_cross_trial_identity_mix(tmp_path: Path):
             trial_id=first.trial_id,
             output_dir=tmp_path,
             remote_archive_accessed=True,
+        )
+
+
+def test_searched_zero_exit_is_accepted_only_with_durable_checkpoint(tmp_path: Path):
+    identity = tmp_path / "identities.csv"
+    summary = tmp_path / "receipt.json"
+    identity.write_text("selected_row,pooled_source_row,trial_id,plane_index,cluster_index,correlation\n")
+    summary.write_text("{}")
+
+    runner = _recovery_runner_module()
+    runner._require_durable_trial_checkpoint(
+        returncode=1,
+        trial_id=LBM_TRIALS[0],
+        identity_path=identity,
+        summary_path=summary,
+    )
+
+    import pytest
+
+    with pytest.raises(SystemExit, match="without durable standalone receipt"):
+        runner._require_durable_trial_checkpoint(
+            returncode=1,
+            trial_id=LBM_TRIALS[0],
+            identity_path=tmp_path / "missing.csv",
+            summary_path=summary,
         )

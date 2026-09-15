@@ -130,6 +130,26 @@ def _write_accumulated_receipt(
     return summary_path
 
 
+def _require_durable_trial_checkpoint(
+    *,
+    returncode: int,
+    trial_id: str,
+    identity_path: Path,
+    summary_path: Path,
+) -> None:
+    """Accept a searched-zero exit only after its checkpoint is durable."""
+    if not identity_path.is_file() or not summary_path.is_file():
+        raise SystemExit(
+            "trial subprocess ended without durable standalone receipt: "
+            f"trial={trial_id} exit={returncode} identity={identity_path} summary={summary_path}"
+        )
+    # The single-trial runner uses exit 1 to signal zero exact matches after it
+    # has written a valid searched-zero checkpoint. Other nonzero exits remain
+    # execution failures.
+    if returncode not in (0, 1):
+        raise SystemExit(f"trial subprocess failed: trial={trial_id} exit={returncode}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed-identities", required=True)
@@ -227,7 +247,7 @@ def main() -> None:
             trial,
         ]
         print("+", " ".join(cmd), flush=True)
-        subprocess.run(cmd, check=True)
+        completed = subprocess.run(cmd, check=False)
 
         stem = trial.replace("/", "_")
         checkpoint_identity = (
@@ -240,11 +260,12 @@ def main() -> None:
             / "trial_receipts"
             / f"gauthey_lbm_identity_receipt_{stem}.json"
         )
-        if not checkpoint_identity.is_file() or not checkpoint_summary.is_file():
-            raise SystemExit(
-                "trial subprocess completed without durable standalone receipt: "
-                f"trial={trial} identity={checkpoint_identity} summary={checkpoint_summary}"
-            )
+        _require_durable_trial_checkpoint(
+            returncode=completed.returncode,
+            trial_id=trial,
+            identity_path=checkpoint_identity,
+            summary_path=checkpoint_summary,
+        )
 
         new_identities = load_identity_csv(checkpoint_identity)
         receipt_sets.append(new_identities)
