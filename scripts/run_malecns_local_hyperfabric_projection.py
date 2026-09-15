@@ -13,12 +13,16 @@ producer used by the current structure/function benchmark. It then:
 6. derives the current scale-free sender-gain candidate m_i P_ij through that
    hyperfabric chart, checking exact agreement with the standalone composition;
 7. reports terminal consumer metrics (MAE, R2, Pearson r, Spearman rho) and
-   baseline-normalized gains on the exact same LORO folds.
+   baseline-normalized gains on the exact same LORO folds; and
+8. evaluates a training-structure-only PCA latent ladder Z_d without using
+   functional outcomes to fit the latent encoder.
 
 This is deliberately a representation/provenance and consumer-evaluation test.
 Terminal metrics do not certify consumer sufficiency, fibre equivalence, or
 physical identity, and matrix-coordinate count is not silently called latent
-dimension.
+dimension. The PCA dimension is a genuine learned structural latent coordinate
+count, but its discovery-recording optimum is not promoted to universal minimal
+latent dimension until independent-trial replication is paid.
 """
 
 from __future__ import annotations
@@ -55,6 +59,10 @@ from dashi.analysis.overlap_controlled_structure_function import (
 from dashi.analysis.sender_magnitude_shape_composition import compose_sender_magnitude_shape
 from dashi.analysis.stimulus_controlled_functional import (
     residualize_region_traces_against_stimulus,
+)
+from dashi.analysis.structural_latent_ladder import (
+    evaluate_overlap_controlled_structural_latent_ladder,
+    structural_latent_ladder_to_dict,
 )
 from dashi.analysis.structure_function_real import (
     RegionStructuralFeatures,
@@ -191,6 +199,11 @@ def main() -> None:
         description_length=1.0,
         description_length_unit="declared composite matrix field; not latent dimension or bits",
     )
+    latent_ladder = evaluate_overlap_controlled_structural_latent_ladder(
+        family,
+        functional.matrix,
+        overlap_kernel,
+    )
 
     local_counts = [len(coords) for coords in fabric.fibres.values()]
     payload = {
@@ -251,6 +264,7 @@ def main() -> None:
                 "legacy_full_ndim_chart": "same LORO/control fit using the declared eight-coordinate chart",
             },
         },
+        "structural_latent_ladder": structural_latent_ladder_to_dict(latent_ladder),
         "firewalls": {
             "time_is_fibre_ontology": False,
             "hop_is_fibre_ontology": False,
@@ -262,6 +276,8 @@ def main() -> None:
             "sender_gain_projection_implies_sufficiency": False,
             "lower_terminal_loss_implies_better_representation_for_all_consumers": False,
             "declared_matrix_coordinate_count_equals_latent_dimension": False,
+            "lowest_discovery_mae_pca_dimension_is_universal_minimal_latent": False,
+            "pca_geometry_is_biological_mechanism": False,
         },
     }
 
