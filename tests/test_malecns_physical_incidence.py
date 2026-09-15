@@ -45,6 +45,13 @@ def test_sparse_physical_incidence_keeps_only_nonzero_direct_support():
     }
 
 
+def test_region_fabric_is_explicitly_an_aggregation_not_raw_segment_incidence():
+    fabric = physical_region_fabric_from_structural(_structural())
+    assert fabric.carrier_level == "region_aggregation"
+    assert fabric.raw_segment_incidence is False
+    assert fabric.upstream_source_key == "full_connection_graph"
+
+
 def test_sparse_physical_incidence_regenerates_structural_matrices_exactly():
     structural = _structural()
     fabric = physical_region_fabric_from_structural(structural)
