@@ -9,13 +9,16 @@ producer used by the current structure/function benchmark. It then:
 3. adds base incidences for every composable pair (i,j)->(j,k);
 4. projects the same named chart back out;
 5. verifies that the joined stimulus+overlap-controlled LORO consumer is
-   unchanged by the lift/project round trip; and
+   unchanged by the lift/project round trip;
 6. derives the current scale-free sender-gain candidate m_i P_ij through that
-   hyperfabric chart, checking exact agreement with the standalone composition.
+   hyperfabric chart, checking exact agreement with the standalone composition;
+7. reports terminal consumer metrics (MAE, R2, Pearson r, Spearman rho) and
+   baseline-normalized gains on the exact same LORO folds.
 
-This is deliberately a representation/provenance test. It does not claim that
-m_i P_ij is consumer-sufficient, that the eight chart coordinates are the
-biological fibre topology, or that base incidence manufactures transport.
+This is deliberately a representation/provenance and consumer-evaluation test.
+Terminal metrics do not certify consumer sufficiency, fibre equivalence, or
+physical identity, and matrix-coordinate count is not silently called latent
+dimension.
 """
 
 from __future__ import annotations
@@ -26,6 +29,10 @@ from pathlib import Path
 
 import numpy as np
 
+from dashi.analysis.consumer_relative_scorecard import (
+    evaluate_overlap_controlled_loro_scorecard,
+    scorecard_to_dict,
+)
 from dashi.analysis.gauthey_lbm_experiment import published_lbm_stimulus_regressor
 from dashi.analysis.hyperfabric_sender_gain_projection import (
     project_sender_gain_from_hyperfabric,
@@ -139,6 +146,13 @@ def main() -> None:
         common,
         {"magnitude_sender_shape_reverse": gain_projection.magnitude_sender_shape.T},
     )
+    direct_family = StructuralFibreFamily(
+        common,
+        {
+            "direct_forward": np.asarray(structural_common.direct, dtype=float),
+            "direct_reverse": np.asarray(structural_common.direct, dtype=float).T,
+        },
+    )
 
     traces = np.asarray(producer.traces.traces[:, fi], dtype=float)
     stimulus = published_lbm_stimulus_regressor(traces.shape[0])
@@ -154,6 +168,28 @@ def main() -> None:
     )
     gain_loro = evaluate_overlap_controlled_leave_one_region_out(
         gain_family, functional.matrix, overlap_kernel
+    )
+
+    original_scorecard = evaluate_overlap_controlled_loro_scorecard(
+        family,
+        functional.matrix,
+        overlap_kernel,
+        candidate_name="legacy eight-coordinate NDim chart",
+        baseline_families={"direct_connectivity_bidirectional": direct_family},
+        description_length=float(len(chart_names)),
+        description_length_unit="declared chart coordinates; not latent dimension or bits",
+    )
+    gain_scorecard = evaluate_overlap_controlled_loro_scorecard(
+        gain_family,
+        functional.matrix,
+        overlap_kernel,
+        candidate_name="hyperfabric-derived magnitude sender gain m_i P_ij",
+        baseline_families={
+            "direct_connectivity_bidirectional": direct_family,
+            "legacy_full_ndim_chart": family,
+        },
+        description_length=1.0,
+        description_length_unit="declared composite matrix field; not latent dimension or bits",
     )
 
     local_counts = [len(coords) for coords in fabric.fibres.values()]
@@ -187,6 +223,7 @@ def main() -> None:
             "absolute_difference": abs(
                 original_loro.weighted_mean_residual - projected_loro.weighted_mean_residual
             ),
+            "metric_semantics": "terminal consumer metrics only; lower loss does not establish representation equivalence or adequacy for other consumers",
         },
         "sender_gain_projection": {
             "candidate": "magnitude sender gain m_i times row-relative wiring shape P_ij, evaluated as reverse singleton carrier",
@@ -204,6 +241,16 @@ def main() -> None:
             "certified_consumer_sufficient": False,
             "anatomical_gain_indexing_distinguished_by_current_null": False,
         },
+        "benchmark_scorecards": {
+            "legacy_chart": scorecard_to_dict(original_scorecard),
+            "sender_gain": scorecard_to_dict(gain_scorecard),
+            "baseline_protocol": {
+                "zero": "zero prediction on each fold-specific controlled target",
+                "fold_train_mean": "mean of the fold training controlled target, frozen onto held-out pairs",
+                "direct_connectivity_bidirectional": "same LORO/control fit using only direct-forward and direct-reverse structural coordinates",
+                "legacy_full_ndim_chart": "same LORO/control fit using the declared eight-coordinate chart",
+            },
+        },
         "firewalls": {
             "time_is_fibre_ontology": False,
             "hop_is_fibre_ontology": False,
@@ -213,6 +260,8 @@ def main() -> None:
             "symmetry_implies_quotient_authority": False,
             "consumer_projection_implies_physical_identity": False,
             "sender_gain_projection_implies_sufficiency": False,
+            "lower_terminal_loss_implies_better_representation_for_all_consumers": False,
+            "declared_matrix_coordinate_count_equals_latent_dimension": False,
         },
     }
 
