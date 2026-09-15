@@ -2,6 +2,7 @@ from pathlib import Path
 
 from dashi.analysis.gauthey_lbm_native_field import RecoveredSelectedROI
 from dashi.analysis.gauthey_trial_materialization import (
+    GAUTHEY_PUBLIC_ANATOMY_BOUNDARY,
     canonical_trial_specs,
     default_segmentation_paths,
     identities_by_trial,
@@ -29,6 +30,16 @@ def test_canonical_specs_cover_exactly_six_distinct_recordings():
     assert len({spec.segmentation_name for spec in specs}) == 6
     assert sum(spec.discovery_recording for spec in specs) == 1
     assert next(spec for spec in specs if spec.discovery_recording).trial_id == "04032024_6f_a2_r5"
+
+
+def test_public_anatomy_boundary_requires_raw_tiffs_to_generate_mean_brain():
+    boundary = GAUTHEY_PUBLIC_ANATOMY_BOUNDARY
+    assert boundary.mean_brain_generated_from_raw_tiffs is True
+    assert boundary.local_atlas_generated_from_structural_tiffs_or_same_route_volumes is True
+    assert boundary.public_raw_data_scope == "representative_trial"
+    assert boundary.public_preprocessed_data_scope == "all_trials"
+    assert boundary.preprocessed_functional_carrier_pays_same_trial_anatomy is False
+    assert boundary.non_discovery_common_atlas_registration_paid is False
 
 
 def test_only_pinned_same_trial_anatomy_is_marked_available_by_default():
