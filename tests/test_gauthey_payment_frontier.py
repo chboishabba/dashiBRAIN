@@ -2,6 +2,7 @@ from dashi.io.gauthey_payment_frontier import (
     PaymentRoute,
     canonical_deposited_2p_recovery_frontier,
     canonical_public_atlas_registration_frontier,
+    canonical_public_raw_acquisition_frontier,
     classify_deposit_source_resolution,
 )
 
@@ -74,3 +75,18 @@ def test_public_atlas_launcher_is_not_an_executable_transform_receipt():
     assert frontier.ants_dependency_declared
     assert not frontier.implementation_present
     assert frontier.payment_b_route is PaymentRoute.SOURCE_IMPLEMENTATION_REQUIRED
+
+
+def test_public_raw_frontier_does_not_promote_internal_paths_or_generic_globus_support():
+    frontier = canonical_public_raw_acquisition_frontier()
+    assert frontier.representative_raw_public
+    assert frontier.all_trial_preprocessed_public
+    assert frontier.princeton_mirror_public
+    assert frontier.pdc_large_deposits_may_use_globus
+    assert frontier.historical_internal_storage_namespace_observed
+    assert frontier.historical_internal_storage_root == "/scratch/gpfs/albertl/rigE_data/"
+    assert not frontier.public_non_discovery_raw_route_found
+    assert not frontier.public_non_discovery_anatomy_route_found
+    assert not frontier.dataset_specific_public_globus_endpoint_found
+    assert not frontier.internal_path_is_public_access_receipt
+    assert frontier.next_payment_route is PaymentRoute.EXTERNAL_SCIENTIFIC_RECEIPT
