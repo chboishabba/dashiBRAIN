@@ -107,6 +107,7 @@ class ReplicateFrozenLatentScore:
     timepoint_count: int
     ladder: StructuralLatentLadderResult
     encoder_reselected_for_replicate: bool = False
+    independent_recording_validated: bool = True
 
 
 @dataclass(frozen=True)
@@ -207,8 +208,6 @@ def evaluate_frozen_latent_replicate(
 ) -> ReplicateFrozenLatentScore:
     """Score an independent recording with one already-frozen structural encoder."""
     if tuple(replicate.producer.traces.unit_ids) != encoder.regions:
-        # Use a latent-specific error before the generic replicate validation so
-        # a wrong encoder artifact is distinguishable from manifest drift.
         raise ValueError("replicate does not match frozen latent encoder region carrier")
     replicate.validate(encoder.regions)
     if full_reference_family is not None and tuple(full_reference_family.regions) != encoder.regions:
@@ -228,6 +227,7 @@ def evaluate_frozen_latent_replicate(
         timepoint_count=int(replicate.producer.traces.traces.shape[0]),
         ladder=ladder,
         encoder_reselected_for_replicate=False,
+        independent_recording_validated=True,
     )
 
 
