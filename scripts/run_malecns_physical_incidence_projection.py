@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Regenerate the MaleCNS NDim chart from nonzero physical region incidence.
+"""Regenerate the MaleCNS NDim chart from the 26-region incidence quotient.
 
 This runner uses the same real MaleCNS/Gauthey inputs as the joined benchmark,
 but replaces the dense possible-pair presentation with the nonzero unsigned
-regional coupling support.  The historical NDim chart is then regenerated from
-that sparse carrier and evaluated with the same stimulus+overlap-controlled
+regional coupling support. The historical NDim chart is then regenerated from
+that regional quotient and evaluated with the same stimulus+overlap-controlled
 leave-one-region-out consumer.
+
+The receipt keeps the official segment-level physical source separate from the
+membership-aggregated regional carrier.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ from dashi.analysis.malecns_physical_incidence import (
     ndim_chart_from_physical_region_fabric,
     physical_incidence_chart_round_trip_exact,
     physical_region_fabric_from_structural,
+    physical_region_source_metadata,
 )
 from dashi.analysis.ndim_structure_function import build_ndim_structural_fibres
 from dashi.analysis.overlap_controlled_structure_function import (
@@ -93,8 +97,10 @@ def main() -> None:
     )
 
     original = build_ndim_structural_fibres(structural_common)
-    physical = physical_region_fabric_from_structural(structural_common)
-    regenerated = ndim_chart_from_physical_region_fabric(physical)
+    regional = physical_region_fabric_from_structural(structural_common)
+    source_metadata = physical_region_source_metadata(regional)
+    upstream = manifest.official_bulk_source(regional.upstream_source_key)
+    regenerated = ndim_chart_from_physical_region_fabric(regional)
 
     traces = np.asarray(producer.traces.traces[:, fi], dtype=float)
     stimulus = published_lbm_stimulus_regressor(traces.shape[0])
@@ -113,17 +119,26 @@ def main() -> None:
         "status": "real_region_level_sparse_physical_incidence_projection",
         "regions": list(common),
         "region_count": len(common),
+        "official_upstream_physical_source": {
+            "dataset_id": upstream.dataset_id,
+            "source_key": upstream.key,
+            "role": upstream.role,
+            "gs_uri": upstream.gs_uri,
+            "can_pay_physical_connectivity": upstream.can_pay_physical_connectivity,
+        },
         "structural_source": {
             "source_rows": neuropil.source_rows,
             "observed_neuron_count": neuropil.observed_neuron_count,
             "mode": "MaleCNS nonzero membership-aggregated regional direct coupling",
+            **source_metadata,
         },
         "physical_incidence": {
-            "possible_ordered_pairs": physical.possible_pair_count,
-            "nonzero_direct_incidences": physical.incidence_count,
-            "density": physical.density,
-            "zero_pairs_are_not_physical_edges": True,
+            "possible_ordered_pairs": regional.possible_pair_count,
+            "nonzero_direct_incidences": regional.incidence_count,
+            "density": regional.density,
+            "zero_pairs_are_not_regional_edges": True,
             "signed_metadata_creates_edge_when_unsigned_zero": False,
+            "region_aggregation_equals_raw_connectome": False,
         },
         "chart_regeneration": {
             "coordinate_names": list(original.fibres),
@@ -134,13 +149,14 @@ def main() -> None:
         "consumer": {
             "description": "published-stimulus-residualized functional correlation with foldwise atlas-overlap control",
             "original_chart_weighted_loro": original_loro.weighted_mean_residual,
-            "physical_regenerated_chart_weighted_loro": regenerated_loro.weighted_mean_residual,
+            "regional_regenerated_chart_weighted_loro": regenerated_loro.weighted_mean_residual,
             "absolute_difference": abs(
                 original_loro.weighted_mean_residual - regenerated_loro.weighted_mean_residual
             ),
         },
         "firewalls": {
-            "dense_possible_pair_base_equals_physical_incidence": False,
+            "dense_possible_pair_base_equals_raw_physical_incidence": False,
+            "region_aggregation_equals_raw_physical_incidence": False,
             "base_incidence_implies_fibre_transport": False,
             "derived_chart_coordinate_is_primitive_physical_edge": False,
             "consumer_invariance_implies_mechanistic_sufficiency": False,
