@@ -4,6 +4,8 @@ import pytest
 from dashi.analysis.frozen_structural_latent_encoder import (
     evaluate_frozen_overlap_controlled_latent_ladder,
     fit_frozen_structural_loro_encoder,
+    load_frozen_structural_loro_encoder,
+    save_frozen_structural_loro_encoder,
 )
 from dashi.analysis.ndim_structure_function import StructuralFibreFamily
 from dashi.analysis.structural_latent_ladder import (
@@ -97,3 +99,35 @@ def test_frozen_encoder_does_not_pay_replication_or_sufficiency_by_construction(
     assert encoder.functional_outcomes_used_to_fit_encoder is False
     assert result.independent_trial_replication_paid is False
     assert all(x.consumer_sufficiency_certified is False for x in result.dimensions)
+
+
+def test_frozen_encoder_artifact_roundtrip_is_exact_and_reuses_same_scores(tmp_path):
+    family, observed, overlap = _synthetic()
+    encoder = fit_frozen_structural_loro_encoder(family)
+    target = tmp_path / "encoder.npz"
+
+    save_frozen_structural_loro_encoder(encoder, target)
+    restored = load_frozen_structural_loro_encoder(target)
+
+    assert restored.regions == encoder.regions
+    assert restored.common_max_dimension == encoder.common_max_dimension
+    assert restored.correlation_threshold == encoder.correlation_threshold
+    assert restored.functional_outcomes_used_to_fit_encoder is False
+    assert len(restored.folds) == len(encoder.folds)
+    for a, b in zip(restored.folds, encoder.folds):
+        assert a.held_out_region == b.held_out_region
+        assert a.selected_fibres == b.selected_fibres
+        assert np.array_equal(a.feature_means, b.feature_means)
+        assert np.array_equal(a.feature_scales, b.feature_scales)
+        assert np.array_equal(a.components, b.components)
+        assert np.array_equal(a.singular_values, b.singular_values)
+    for a, b in zip(restored.train_latent_full_by_fold, encoder.train_latent_full_by_fold):
+        assert np.array_equal(a, b)
+    for a, b in zip(restored.held_latent_full_by_fold, encoder.held_latent_full_by_fold):
+        assert np.array_equal(a, b)
+
+    before = evaluate_frozen_overlap_controlled_latent_ladder(encoder, observed, overlap)
+    after = evaluate_frozen_overlap_controlled_latent_ladder(restored, observed, overlap)
+    for a, b in zip(before.dimensions, after.dimensions):
+        assert a.dimension == b.dimension
+        assert a.metrics == b.metrics
