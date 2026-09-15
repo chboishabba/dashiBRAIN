@@ -3,6 +3,10 @@
 This module instantiates the abstract MaleCNS benchmark protocol, provenance
 graphs, and consumer evidence policies with concrete artifact specifications,
 dataset versions, and SHA-256 verification boundaries.
+
+The recommended working-set manifest stays intentionally small. Official bulk
+MaleCNS source coordinates live in ``malecns_official_sources`` and can be
+queried here without adding multi-gigabyte artifacts to the working-set budget.
 """
 
 from __future__ import annotations
@@ -32,6 +36,11 @@ from dashi.analysis.provenance_dependence import (
     ProvenanceGraph,
     ProvenanceRoot,
     RootKind,
+)
+from dashi.io.malecns_official_sources import (
+    MALECNS_DATASET_ID,
+    OFFICIAL_MALECNS_SOURCES,
+    MaleCNSOfficialSource,
 )
 from dashi.io.malecns_protocol import (
     ArtifactReceipt,
@@ -93,9 +102,9 @@ CANONICAL_ARTIFACT_SPECS: dict[str, ArtifactSpec] = {
         download_url="https://storage.googleapis.com/flyem-male-cns/v1.0/connectome-data/flat-connectome/connectome-weights-male-cns-v1.0-minconf-0.5-significant-only.feather",
         expected_size_bytes=502_169_298,
         source=MALE_CNS_SOURCE,
-        dataset_version="male-cns:v1.0",
+        dataset_version=MALECNS_DATASET_ID,
         provenance_roots=(ROOT_MALECNS_DATASET, ROOT_MALECNS_ANIMAL, ROOT_MALECNS_EM_ACQUISITION),
-        description="MaleCNS v1.0 significant connection graph (weights and segment pairs)",
+        description="MaleCNS v1.0 significant connection graph (weights and segment pairs); working-set derivative, not the full official connection graph",
     ),
     "body_annotations": ArtifactSpec(
         key="body_annotations",
@@ -105,7 +114,7 @@ CANONICAL_ARTIFACT_SPECS: dict[str, ArtifactSpec] = {
         download_url="https://storage.googleapis.com/flyem-male-cns/v1.0/connectome-data/flat-connectome/body-annotations-male-cns-v1.0-minconf-0.5.feather",
         expected_size_bytes=14_483_314,
         source=MALE_CNS_SOURCE,
-        dataset_version="male-cns:v1.0",
+        dataset_version=MALECNS_DATASET_ID,
         provenance_roots=(ROOT_MALECNS_DATASET, ROOT_MALECNS_ANIMAL),
         description="MaleCNS curated neuron annotations",
     ),
@@ -117,7 +126,7 @@ CANONICAL_ARTIFACT_SPECS: dict[str, ArtifactSpec] = {
         download_url="https://storage.googleapis.com/flyem-male-cns/v1.0/connectome-data/flat-connectome/body-neurotransmitters-male-cns-v1.0.feather",
         expected_size_bytes=43_282_834,
         source=MALE_CNS_SOURCE,
-        dataset_version="male-cns:v1.0",
+        dataset_version=MALECNS_DATASET_ID,
         provenance_roots=(ROOT_MALECNS_DATASET, ROOT_MALECNS_ANIMAL),
         description="Aggregate predicted neurotransmitters per body for sign determination",
     ),
@@ -130,8 +139,6 @@ CANONICAL_ARTIFACT_SPECS: dict[str, ArtifactSpec] = {
         expected_size_bytes=5_020_000,
         source=GAUTHEY_WHOLE_BRAIN_SOURCE,
         dataset_version="zenodo:17618684:Data.zip:dffs_audio_2p_corr_top05_all",
-        # The runner resolved this as an aggregate preprocessed matrix. Do not
-        # attach a particular animal/trial root until the deposit proves it.
         provenance_roots=(ROOT_GAUTHEY_DATASET, ROOT_GAUTHEY_AGGREGATED_FUNCTIONAL),
         description="Gauthey preprocessed audio-correlated 2-photon matrix; 940 x 668; archive-unit identities remain unregistered",
     ),
@@ -181,6 +188,10 @@ class MaleCNSManifest:
 
     def get_tier_specs(self, tier: str) -> list[ArtifactSpec]:
         return [spec for spec in self.specs.values() if spec.tier == tier]
+
+    def official_bulk_source(self, key: str) -> MaleCNSOfficialSource:
+        """Return an official bulk-source coordinate without adding it to the working-set budget."""
+        return OFFICIAL_MALECNS_SOURCES[key]
 
     def target_path(self, key: str) -> Path:
         return self.base_dir / self.specs[key].relative_path
