@@ -1,26 +1,14 @@
 #!/usr/bin/env python3
 """Run frozen-carrier MaleCNS structure/function replication across recordings.
 
-Manifest schema::
-
-    {
-      "regions": ["AL", ...],
-      "replicates": [
-        {
-          "replicate_id": "04032024_6f_a2_r1",
-          "region_functional": "path/to/painted_domain_functional.csv",
-          "functional_membership": "path/to/selected_roi_painted_domain_membership.csv",
-          "atlas_identifier": "VFB_JRC2018Unisex",
-          "source_identifier": "...",
-          "independent_recording": true,
-          "independence_receipt": "distinct source LBM recording ..."
-        }
-      ]
-    }
-
-The manifest's region list is the frozen discovery vocabulary.  Replicate files
+The manifest's region list is the frozen discovery vocabulary. Replicate files
 may present those regions in another order, but no replicate may silently add,
 remove, or substitute regions.
+
+When ``--latent-encoder`` is supplied, the persisted structure-only LORO encoder
+from discovery is loaded and reused unchanged for every independent replicate.
+Within-replicate nuisance and linear consumer coefficients are still fit on that
+recording's training folds; the representation geometry is not refit.
 """
 
 from __future__ import annotations
@@ -31,16 +19,25 @@ from pathlib import Path
 
 import numpy as np
 
+from dashi.analysis.frozen_structural_latent_encoder import (
+    load_frozen_structural_loro_encoder,
+)
 from dashi.analysis.malecns_replication import (
     FrozenStructuralCarrier,
     ReplicateFunctionalInput,
+    evaluate_frozen_latent_replicate,
     evaluate_replication_set,
 )
+from dashi.analysis.ndim_structure_function import build_ndim_structural_fibres
 from dashi.analysis.overlap_controlled_structure_function import (
     load_overlap_membership_csv,
     restrict_overlap_kernel,
 )
-from dashi.analysis.structure_function_real import RegionStructuralFeatures, aggregate_connectome_by_membership
+from dashi.analysis.structural_latent_ladder import structural_latent_ladder_to_dict
+from dashi.analysis.structure_function_real import (
+    RegionStructuralFeatures,
+    aggregate_connectome_by_membership,
+)
 from dashi.io.functional_imaging_loader import FunctionalTraceTable
 from dashi.io.malecns_loader import load_malecns_graph
 from dashi.io.malecns_manifest import MaleCNSManifest
@@ -90,6 +87,10 @@ def main() -> None:
     p.add_argument("--synapse-partners", required=True)
     p.add_argument("--manifest", required=True)
     p.add_argument("--output", required=True)
+    p.add_argument(
+        "--latent-encoder",
+        help="Optional persisted structure-only frozen LORO encoder (.npz) from discovery",
+    )
     args = p.parse_args()
 
     config = _load_json(args.manifest)
@@ -124,8 +125,6 @@ def main() -> None:
         signed_adjacency=signed,
     )
     if tuple(structural.regions) != regions:
-        # Membership loader ordering is an implementation detail; reorder once to
-        # the manifest's frozen discovery order, never separately per replicate.
         index = {region: i for i, region in enumerate(structural.regions)}
         missing = [region for region in regions if region not in index]
         if missing:
@@ -140,6 +139,15 @@ def main() -> None:
     if structural.signed_direct is None:
         raise RuntimeError("signed structural carrier was not produced")
     frozen = FrozenStructuralCarrier(regions, structural.direct, structural.signed_direct)
+    full_ndim_family = build_ndim_structural_fibres(structural)
+
+    latent_encoder = None
+    if args.latent_encoder:
+        latent_encoder = load_frozen_structural_loro_encoder(args.latent_encoder)
+        if latent_encoder.regions != regions:
+            raise ValueError(
+                "persisted latent encoder region carrier differs from replication manifest"
+            )
 
     replicates: list[ReplicateFunctionalInput] = []
     for spec in replicate_specs:
@@ -164,6 +172,20 @@ def main() -> None:
         )
 
     result = evaluate_replication_set(frozen, replicates)
+    latent_scores = (
+        [
+            evaluate_frozen_latent_replicate(
+                latent_encoder,
+                replicate,
+                full_reference_family=full_ndim_family,
+            )
+            for replicate in replicates
+        ]
+        if latent_encoder is not None
+        else []
+    )
+    latent_by_id = {score.replicate_id: score for score in latent_scores}
+
     payload = {
         "status": "malecns_frozen_carrier_independent_recording_replication",
         "frozen_regions": list(regions),
@@ -179,6 +201,17 @@ def main() -> None:
             "signed_reverse",
             "magnitude_shape_reverse",
         ],
+        "frozen_latent_encoder": None
+        if latent_encoder is None
+        else {
+            "artifact_path": str(args.latent_encoder),
+            "common_max_dimension": latent_encoder.common_max_dimension,
+            "correlation_threshold": latent_encoder.correlation_threshold,
+            "functional_outcomes_used_to_fit_encoder": (
+                latent_encoder.functional_outcomes_used_to_fit_encoder
+            ),
+            "reselected_per_replicate": False,
+        },
         "replicate_count": result.replicate_count,
         "replicates": [
             {
@@ -192,6 +225,19 @@ def main() -> None:
                 "residual_magnitude_shape_reverse": score.residual_magnitude_shape_reverse,
                 "magnitude_shape_gain_over_unsigned": score.magnitude_shape_gain_over_unsigned,
                 "magnitude_shape_gain_over_relative_shape": score.magnitude_shape_gain_over_relative_shape,
+                "frozen_structural_latent": None
+                if score.replicate_id not in latent_by_id
+                else {
+                    "encoder_reselected_for_replicate": latent_by_id[
+                        score.replicate_id
+                    ].encoder_reselected_for_replicate,
+                    "independent_recording_validated": latent_by_id[
+                        score.replicate_id
+                    ].independent_recording_validated,
+                    "ladder": structural_latent_ladder_to_dict(
+                        latent_by_id[score.replicate_id].ladder
+                    ),
+                },
             }
             for score in result.scores
         ],
@@ -203,9 +249,11 @@ def main() -> None:
         "firewalls": {
             "within_replicate_loro_coefficients_are_fitted": True,
             "representation_reselection_allowed": False,
+            "latent_encoder_refit_on_replicate": False,
             "pooled_recording_counts_as_independent_replication": False,
             "replication_implies_mechanism": False,
             "single_animal_or_recording_set_implies_population_generalization": False,
+            "best_replicated_dimension_implies_universal_sufficient_latent": False,
         },
     }
 
