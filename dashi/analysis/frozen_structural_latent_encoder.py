@@ -1,9 +1,9 @@
-"""Freeze structural latent encoders for cross-recording evaluation.
+"""Freeze and persist structural latent encoders for cross-recording evaluation.
 
-The MaleCNS structural carrier is shared across Gauthey recordings.  Therefore a
+The MaleCNS structural carrier is shared across Gauthey recordings. Therefore a
 consumer-relative latent encoder can be fit once from structural training-pair
 geometry alone and reused unchanged on every independently registered functional
-recording.  This module makes that freeze explicit so replication cannot silently
+recording. This module makes that freeze explicit so replication cannot silently
 reselect fibres, scales, or PCA components from the replicate outcome.
 
 Functional outcomes are used only downstream: foldwise overlap nuisance fitting
@@ -15,6 +15,8 @@ coefficients or a mechanistic dynamical model.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from pathlib import Path
 
 import numpy as np
 
@@ -37,6 +39,9 @@ from dashi.analysis.structural_latent_ladder import (
     StructuralLatentLadderResult,
     fit_structural_latent_geometry,
 )
+
+
+ENCODER_ARTIFACT_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -83,6 +88,148 @@ def fit_frozen_structural_loro_encoder(
         held_latent_full_by_fold=tuple(held_latents),
         common_max_dimension=int(common_max_dimension),
         correlation_threshold=float(correlation_threshold),
+        functional_outcomes_used_to_fit_encoder=False,
+    )
+
+
+def save_frozen_structural_loro_encoder(
+    encoder: FrozenStructuralLOROEncoder,
+    path: str | Path,
+) -> None:
+    """Persist one frozen encoder without pickle/object-array semantics."""
+    if encoder.functional_outcomes_used_to_fit_encoder:
+        raise ValueError("refusing to persist encoder marked as outcome-fitted")
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    metadata = {
+        "artifact_version": ENCODER_ARTIFACT_VERSION,
+        "regions": list(encoder.regions),
+        "common_max_dimension": int(encoder.common_max_dimension),
+        "correlation_threshold": float(encoder.correlation_threshold),
+        "functional_outcomes_used_to_fit_encoder": False,
+        "folds": [
+            {
+                "held_out_region": fold.held_out_region,
+                "selected_fibres": list(fold.selected_fibres),
+                "source_dimension": int(fold.source_dimension),
+                "fit_pair_count": int(fold.fit_pair_count),
+                "held_out_pair_count": int(fold.held_out_pair_count),
+            }
+            for fold in encoder.folds
+        ],
+    }
+    arrays: dict[str, np.ndarray] = {
+        "metadata_json": np.asarray(json.dumps(metadata, sort_keys=True)),
+    }
+    for i, fold in enumerate(encoder.folds):
+        arrays[f"fold_{i}_feature_means"] = np.asarray(fold.feature_means, dtype=float)
+        arrays[f"fold_{i}_feature_scales"] = np.asarray(fold.feature_scales, dtype=float)
+        arrays[f"fold_{i}_components"] = np.asarray(fold.components, dtype=float)
+        arrays[f"fold_{i}_singular_values"] = np.asarray(fold.singular_values, dtype=float)
+        arrays[f"fold_{i}_train_latent_full"] = np.asarray(
+            encoder.train_latent_full_by_fold[i], dtype=float
+        )
+        arrays[f"fold_{i}_held_latent_full"] = np.asarray(
+            encoder.held_latent_full_by_fold[i], dtype=float
+        )
+    np.savez(target, **arrays)
+
+
+def load_frozen_structural_loro_encoder(
+    path: str | Path,
+) -> FrozenStructuralLOROEncoder:
+    """Load a frozen encoder artifact with structural/shape consistency checks."""
+    source = Path(path)
+    with np.load(source, allow_pickle=False) as payload:
+        if "metadata_json" not in payload:
+            raise ValueError("frozen encoder artifact lacks metadata_json")
+        metadata = json.loads(str(payload["metadata_json"].item()))
+        if metadata.get("artifact_version") != ENCODER_ARTIFACT_VERSION:
+            raise ValueError(
+                f"unsupported frozen encoder artifact version: {metadata.get('artifact_version')!r}"
+            )
+        if metadata.get("functional_outcomes_used_to_fit_encoder") is not False:
+            raise ValueError("artifact does not certify structure-only encoder fitting")
+
+        regions = tuple(str(x) for x in metadata["regions"])
+        fold_meta = list(metadata["folds"])
+        if len(fold_meta) != len(regions):
+            raise ValueError("frozen encoder fold metadata does not match region count")
+
+        folds: list[FoldStructuralLatentGeometry] = []
+        train_latents: list[np.ndarray] = []
+        held_latents: list[np.ndarray] = []
+        for i, info in enumerate(fold_meta):
+            required = (
+                f"fold_{i}_feature_means",
+                f"fold_{i}_feature_scales",
+                f"fold_{i}_components",
+                f"fold_{i}_singular_values",
+                f"fold_{i}_train_latent_full",
+                f"fold_{i}_held_latent_full",
+            )
+            missing = [name for name in required if name not in payload]
+            if missing:
+                raise ValueError(f"frozen encoder fold {i} lacks arrays: {missing}")
+
+            means = np.asarray(payload[required[0]], dtype=float).copy()
+            scales = np.asarray(payload[required[1]], dtype=float).copy()
+            components = np.asarray(payload[required[2]], dtype=float).copy()
+            singular_values = np.asarray(payload[required[3]], dtype=float).copy()
+            train_full = np.asarray(payload[required[4]], dtype=float).copy()
+            held_full = np.asarray(payload[required[5]], dtype=float).copy()
+            source_dimension = int(info["source_dimension"])
+            selected_fibres = tuple(str(x) for x in info["selected_fibres"])
+
+            if means.shape != scales.shape or means.ndim != 1:
+                raise ValueError(f"fold {i} feature mean/scale geometry is inconsistent")
+            if means.size != len(selected_fibres):
+                raise ValueError(f"fold {i} selected-fibre count disagrees with feature geometry")
+            if components.ndim != 2 or components.shape[1] != means.size:
+                raise ValueError(f"fold {i} PCA components disagree with feature geometry")
+            if components.shape[0] != source_dimension:
+                raise ValueError(f"fold {i} source dimension disagrees with PCA components")
+            if singular_values.shape != (source_dimension,):
+                raise ValueError(f"fold {i} singular values disagree with source dimension")
+            if train_full.ndim != 2 or train_full.shape[1] != source_dimension:
+                raise ValueError(f"fold {i} training latent geometry is inconsistent")
+            if held_full.ndim != 2 or held_full.shape[1] != source_dimension:
+                raise ValueError(f"fold {i} held latent geometry is inconsistent")
+            if train_full.shape[0] != int(info["fit_pair_count"]):
+                raise ValueError(f"fold {i} training pair count disagrees with latent artifact")
+            if held_full.shape[0] != int(info["held_out_pair_count"]):
+                raise ValueError(f"fold {i} held pair count disagrees with latent artifact")
+
+            folds.append(
+                FoldStructuralLatentGeometry(
+                    held_out_region=str(info["held_out_region"]),
+                    selected_fibres=selected_fibres,
+                    feature_means=means,
+                    feature_scales=scales,
+                    components=components,
+                    singular_values=singular_values,
+                    source_dimension=source_dimension,
+                    fit_pair_count=int(info["fit_pair_count"]),
+                    held_out_pair_count=int(info["held_out_pair_count"]),
+                )
+            )
+            train_latents.append(train_full)
+            held_latents.append(held_full)
+
+    common_max = int(metadata["common_max_dimension"])
+    if common_max != min(fold.source_dimension for fold in folds):
+        raise ValueError("common latent dimension disagrees with fold source dimensions")
+    if tuple(fold.held_out_region for fold in folds) != regions:
+        raise ValueError("fold held-out order disagrees with frozen region vocabulary")
+
+    return FrozenStructuralLOROEncoder(
+        regions=regions,
+        folds=tuple(folds),
+        train_latent_full_by_fold=tuple(train_latents),
+        held_latent_full_by_fold=tuple(held_latents),
+        common_max_dimension=common_max,
+        correlation_threshold=float(metadata["correlation_threshold"]),
         functional_outcomes_used_to_fit_encoder=False,
     )
 
@@ -178,8 +325,6 @@ def evaluate_frozen_overlap_controlled_latent_ladder(
             raise RuntimeError("full reference uses a different controlled held-out target")
         reference_prediction = reference_bundle.prediction
     else:
-        # Full structural span of the frozen basis is the natural reference when
-        # every fold shares the declared common maximum dimension.
         reference_prediction = np.concatenate(
             predictions_by_dimension[encoder.common_max_dimension - 1]
         )
