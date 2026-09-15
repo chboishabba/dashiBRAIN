@@ -1,28 +1,15 @@
 #!/usr/bin/env python3
-"""Materialise the real MaleCNS NDim chart as a local fibre hyperfabric.
+"""Materialise and score real MaleCNS consumer-relative structural carriers.
 
-The runner streams the same real MaleCNS synapse carrier and Gauthey functional
-producer used by the current structure/function benchmark. It then:
+Alongside the exact hyperfabric lift/project and sender-gain projection, this
+runner now reports terminal held-out scorecards and a training-structure-only
+latent ladder.  A Turner-style directed path comparator uses inverse unsigned
+structural weight as edge distance and all-pairs directed shortest paths; this
+imports the graph-distance convention only, not a claim of experiment-level
+comparability with Turner et al.
 
-1. builds the historical NDim structural family;
-2. lifts that family to local ordered-region-pair fibres;
-3. adds base incidences for every composable pair (i,j)->(j,k);
-4. projects the same named chart back out;
-5. verifies that the joined stimulus+overlap-controlled LORO consumer is
-   unchanged by the lift/project round trip;
-6. derives the current scale-free sender-gain candidate m_i P_ij through that
-   hyperfabric chart, checking exact agreement with the standalone composition;
-7. reports terminal consumer metrics (MAE, R2, Pearson r, Spearman rho) and
-   baseline-normalized gains on the exact same LORO folds; and
-8. evaluates a training-structure-only PCA latent ladder Z_d without using
-   functional outcomes to fit the latent encoder.
-
-This is deliberately a representation/provenance and consumer-evaluation test.
-Terminal metrics do not certify consumer sufficiency, fibre equivalence, or
-physical identity, and matrix-coordinate count is not silently called latent
-dimension. The PCA dimension is a genuine learned structural latent coordinate
-count, but its discovery-recording optimum is not promoted to universal minimal
-latent dimension until independent-trial replication is paid.
+Terminal loss/metric improvements never establish fibre equivalence, universal
+consumer sufficiency, physical identity, or biological mechanism.
 """
 
 from __future__ import annotations
@@ -64,6 +51,7 @@ from dashi.analysis.structural_latent_ladder import (
     evaluate_overlap_controlled_structural_latent_ladder,
     structural_latent_ladder_to_dict,
 )
+from dashi.analysis.structural_path_baselines import turner_style_path_family
 from dashi.analysis.structure_function_real import (
     RegionStructuralFeatures,
     aggregate_connectome_by_membership,
@@ -161,6 +149,7 @@ def main() -> None:
             "direct_reverse": np.asarray(structural_common.direct, dtype=float).T,
         },
     )
+    path_family = turner_style_path_family(common, structural_common.direct)
 
     traces = np.asarray(producer.traces.traces[:, fi], dtype=float)
     stimulus = published_lbm_stimulus_regressor(traces.shape[0])
@@ -183,7 +172,10 @@ def main() -> None:
         functional.matrix,
         overlap_kernel,
         candidate_name="legacy eight-coordinate NDim chart",
-        baseline_families={"direct_connectivity_bidirectional": direct_family},
+        baseline_families={
+            "direct_connectivity_bidirectional": direct_family,
+            "turner_style_direct_plus_shortest_path": path_family,
+        },
         description_length=float(len(chart_names)),
         description_length_unit="declared chart coordinates; not latent dimension or bits",
     )
@@ -194,10 +186,23 @@ def main() -> None:
         candidate_name="hyperfabric-derived magnitude sender gain m_i P_ij",
         baseline_families={
             "direct_connectivity_bidirectional": direct_family,
+            "turner_style_direct_plus_shortest_path": path_family,
             "legacy_full_ndim_chart": family,
         },
         description_length=1.0,
         description_length_unit="declared composite matrix field; not latent dimension or bits",
+    )
+    path_scorecard = evaluate_overlap_controlled_loro_scorecard(
+        path_family,
+        functional.matrix,
+        overlap_kernel,
+        candidate_name="Turner-style directed direct + inverse-weight shortest-path comparator",
+        baseline_families={
+            "direct_connectivity_bidirectional": direct_family,
+            "legacy_full_ndim_chart": family,
+        },
+        description_length=4.0,
+        description_length_unit="declared comparator coordinates; not latent dimension or bits",
     )
     latent_ladder = evaluate_overlap_controlled_structural_latent_ladder(
         family,
@@ -240,10 +245,7 @@ def main() -> None:
         },
         "sender_gain_projection": {
             "candidate": "magnitude sender gain m_i times row-relative wiring shape P_ij, evaluated as reverse singleton carrier",
-            "derived_only_from_hyperfabric_coordinates": [
-                "direct_forward",
-                "signed_forward",
-            ],
+            "derived_only_from_hyperfabric_coordinates": ["direct_forward", "signed_forward"],
             "matches_direct_composition_exactly": sender_gain_projection_matches_direct_composition(
                 fabric,
                 structural_common.direct,
@@ -257,10 +259,12 @@ def main() -> None:
         "benchmark_scorecards": {
             "legacy_chart": scorecard_to_dict(original_scorecard),
             "sender_gain": scorecard_to_dict(gain_scorecard),
+            "turner_style_path": scorecard_to_dict(path_scorecard),
             "baseline_protocol": {
                 "zero": "zero prediction on each fold-specific controlled target",
                 "fold_train_mean": "mean of the fold training controlled target, frozen onto held-out pairs",
                 "direct_connectivity_bidirectional": "same LORO/control fit using only direct-forward and direct-reverse structural coordinates",
+                "turner_style_direct_plus_shortest_path": "directed inverse-weight edge distance, all-pairs directed shortest-path distance, with forward/reverse coordinates; graph-distance convention adapted from Turner et al. 2021, not experiment-level reproduction",
                 "legacy_full_ndim_chart": "same LORO/control fit using the declared eight-coordinate chart",
             },
         },
@@ -278,6 +282,7 @@ def main() -> None:
             "declared_matrix_coordinate_count_equals_latent_dimension": False,
             "lowest_discovery_mae_pca_dimension_is_universal_minimal_latent": False,
             "pca_geometry_is_biological_mechanism": False,
+            "turner_style_path_comparator_is_apples_to_apples_literature_reproduction": False,
         },
     }
 
