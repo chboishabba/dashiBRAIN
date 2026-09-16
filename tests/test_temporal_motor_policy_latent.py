@@ -55,7 +55,12 @@ def test_predictive_latent_can_capture_a_neural_lead_signal():
     rng = np.random.default_rng(9)
     n = 240
     latent = rng.normal(size=n)
-    neural = np.column_stack((latent, rng.normal(scale=0.05, size=n)))
+    neural = np.column_stack(
+        (
+            latent + rng.normal(scale=0.03, size=n),
+            latent + rng.normal(scale=0.03, size=n),
+        )
+    )
     behaviour = np.zeros((n, 1), dtype=float)
     behaviour[2:, 0] = 3.0 * latent[:-2]
 
