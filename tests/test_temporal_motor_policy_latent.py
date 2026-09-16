@@ -16,10 +16,12 @@ def test_temporal_samples_use_past_neural_history_and_future_behaviour():
         future_lag=2,
     )
     assert samples.neural_history.shape == (5, 6)
+    assert samples.behaviour_history.shape == (5, 4)
     assert np.array_equal(samples.source_time_index, np.array([1, 2, 3, 4, 5]))
     assert np.array_equal(samples.target_time_index, np.array([3, 4, 5, 6, 7]))
     assert np.array_equal(samples.future_behaviour[0], behaviour[3])
     assert np.array_equal(samples.current_behaviour[0], behaviour[1])
+    assert np.array_equal(samples.behaviour_history[0], behaviour[0:2].reshape(-1))
 
 
 def test_structure_of_heldout_behaviour_cannot_change_training_fitted_encoder():
@@ -51,7 +53,7 @@ def test_structure_of_heldout_behaviour_cannot_change_training_fitted_encoder():
     assert np.array_equal(original.feature_scales, perturbed.feature_scales)
 
 
-def test_predictive_latent_can_capture_a_neural_lead_signal():
+def test_predictive_latent_can_capture_a_neural_lead_signal_beyond_behaviour_history():
     rng = np.random.default_rng(9)
     n = 240
     latent = rng.normal(size=n)
@@ -74,6 +76,8 @@ def test_predictive_latent_can_capture_a_neural_lead_signal():
     )
     d1 = result.scores[0]
     assert d1.future_mae < d1.persistence_mae
+    assert d1.future_mae < d1.behaviour_history_mae
+    assert d1.neural_improves_over_behaviour_history is True
     assert d1.motor_policy_identity_certified is False
     assert d1.causal_plan_certified is False
 
