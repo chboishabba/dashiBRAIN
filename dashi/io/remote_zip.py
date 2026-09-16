@@ -223,8 +223,8 @@ def stream_remote_member_to_file(
     """Stream one remote member with exact compressed-byte resume and CRC checking.
 
     Long scientific-member transfers use a larger retry budget than metadata
-    range requests.  A failed chunk never advances the sidecar cursor, so a
-    later invocation resumes from the last fully persisted compressed byte.
+    range requests. A failed chunk never advances the sidecar cursor, so a later
+    invocation resumes from the last fully persisted compressed byte.
     """
     if compressed_chunk_bytes <= 0:
         raise ValueError("compressed_chunk_bytes must be positive")
@@ -303,6 +303,64 @@ def stream_remote_member_to_file(
 
     sidecar.unlink(missing_ok=True)
     return out
+
+
+def stream_remote_member_to_file_resilient(
+    url: str,
+    member: RemoteZipMember,
+    output_path: str | Path,
+    *,
+    transfer_max_attempts: int = 4,
+    transfer_retry_base_seconds: float = 10.0,
+    transfer_retry_cap_seconds: float = 300.0,
+    **stream_kwargs,
+) -> Path:
+    """Resume a long member transfer after a chunk exhausts its request retries.
+
+    ``stream_remote_member_to_file`` already persists each complete compressed
+    chunk to ``.compressed.part``. This wrapper handles the next failure layer:
+    when one chunk exhausts its internal retry budget, re-enter the stream from
+    that exact persisted offset rather than requiring a manual process restart.
+    Nonretryable HTTP errors are never retried here.
+    """
+    if transfer_max_attempts < 1:
+        raise ValueError("transfer_max_attempts must be >= 1")
+
+    out = Path(output_path)
+    for attempt in range(transfer_max_attempts):
+        try:
+            return stream_remote_member_to_file(
+                url,
+                member,
+                out,
+                resume=True,
+                **stream_kwargs,
+            )
+        except urllib.error.HTTPError as exc:
+            retryable = exc.code in _RETRYABLE_HTTP_STATUS
+            if not retryable or attempt + 1 >= transfer_max_attempts:
+                raise
+            delay = _retry_delay_seconds(
+                exc.headers,
+                attempt,
+                transfer_retry_base_seconds,
+                transfer_retry_cap_seconds,
+            )
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            ConnectionError,
+            http.client.HTTPException,
+        ):
+            if attempt + 1 >= transfer_max_attempts:
+                raise
+            delay = min(
+                transfer_retry_cap_seconds,
+                transfer_retry_base_seconds * (2 ** attempt),
+            )
+        time.sleep(delay)
+
+    raise HTTPRangeError(f"member transfer failed after {transfer_max_attempts} attempts: {member.name}")
 
 
 def fetch_named_member(url: str, name: str) -> tuple[RemoteZipMember, bytes]:
