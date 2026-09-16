@@ -2,9 +2,14 @@
 
 This module is deliberately downstream of a same-trial neural/behaviour binding.
 It asks whether a compact code fit from *past/present neural history only* carries
-held-out information about future kinematics.  Predictive success is not promoted
+held-out information about future kinematics. Predictive success is not promoted
 to literal motor-plan identity, memory content, causation, or physical latent
 dimensionality.
+
+The neural latent is compared not only with persistence/train-mean baselines but
+also with a behaviour-history-only autoregressive baseline. This distinguishes
+neural predictive information from kinematics already visible in the recent
+behavioural trajectory.
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ import numpy as np
 @dataclass(frozen=True)
 class TemporalMotorSamples:
     neural_history: np.ndarray
+    behaviour_history: np.ndarray
     future_behaviour: np.ndarray
     current_behaviour: np.ndarray
     source_time_index: np.ndarray
@@ -30,8 +36,10 @@ class TemporalMotorLatentScore:
     future_mae: float
     future_r2: float
     persistence_mae: float
+    behaviour_history_mae: float
     train_mean_mae: float
     neural_improves_over_persistence: bool
+    neural_improves_over_behaviour_history: bool
     motor_policy_identity_certified: bool = False
     causal_plan_certified: bool = False
 
@@ -74,10 +82,10 @@ def build_temporal_motor_samples(
     history_bins: int,
     future_lag: int,
 ) -> TemporalMotorSamples:
-    """Build causal neural-history -> future-behaviour samples.
+    """Build causal history -> future-behaviour samples.
 
-    A sample anchored at time ``t`` uses neural observations only from
-    ``t-history_bins+1 .. t`` and targets behaviour at ``t+future_lag``.
+    A sample anchored at time ``t`` uses neural and behavioural observations only
+    from ``t-history_bins+1 .. t`` and targets behaviour at ``t+future_lag``.
     """
 
     neural = _as_time_by_feature(neural_time_by_feature, name="neural")
@@ -96,15 +104,17 @@ def build_temporal_motor_samples(
 
     source = np.arange(first_source, last_source + 1, dtype=np.int64)
     target = source + future_lag
-    histories = np.stack(
-        [
-            neural[t - history_bins + 1 : t + 1].reshape(-1)
-            for t in source
-        ],
+    neural_histories = np.stack(
+        [neural[t - history_bins + 1 : t + 1].reshape(-1) for t in source],
+        axis=0,
+    )
+    behaviour_histories = np.stack(
+        [behaviour[t - history_bins + 1 : t + 1].reshape(-1) for t in source],
         axis=0,
     )
     return TemporalMotorSamples(
-        neural_history=np.asarray(histories, dtype=float),
+        neural_history=np.asarray(neural_histories, dtype=float),
+        behaviour_history=np.asarray(behaviour_histories, dtype=float),
         future_behaviour=np.asarray(behaviour[target], dtype=float),
         current_behaviour=np.asarray(behaviour[source], dtype=float),
         source_time_index=source,
@@ -145,10 +155,15 @@ def evaluate_temporal_motor_latent_ladder(
 ) -> TemporalMotorLatentResult:
     """Fit a training-neural-only PCA ladder and predict future held-out behavior.
 
-    The final temporal block is held out.  A purge interval of
+    The final temporal block is held out. A purge interval of
     ``history_bins + future_lag - 1`` samples separates fitting windows from the
     held-out windows so overlapping neural histories/future targets cannot leak
     through the split boundary.
+
+    A separate linear autoregressive baseline is fit only on training behaviour
+    history. Neural predictive gain over this baseline is therefore evidence of
+    held-out information beyond recent observed movement, not evidence of a
+    literal internal motor plan.
     """
 
     if not 0.0 < holdout_fraction < 0.5:
@@ -175,6 +190,8 @@ def evaluate_temporal_motor_latent_ladder(
 
     train_x = samples.neural_history[:train_stop]
     held_x = samples.neural_history[held_start:]
+    train_behavior_history = samples.behaviour_history[:train_stop]
+    held_behavior_history = samples.behaviour_history[held_start:]
     train_y = samples.future_behaviour[:train_stop]
     held_y = samples.future_behaviour[held_start:]
     held_current = samples.current_behaviour[held_start:]
@@ -199,6 +216,12 @@ def evaluate_temporal_motor_latent_ladder(
     mean_prediction = np.repeat(train_mean, held_y.shape[0], axis=0)
     persistence_mae = _mae(held_y, held_current)
     train_mean_mae = _mae(held_y, mean_prediction)
+    behaviour_history_prediction = _fit_linear(
+        train_behavior_history,
+        train_y,
+        held_behavior_history,
+    )
+    behaviour_history_mae = _mae(held_y, behaviour_history_prediction)
 
     scores: list[TemporalMotorLatentScore] = []
     for dimension in requested:
@@ -214,8 +237,12 @@ def evaluate_temporal_motor_latent_ladder(
                 future_mae=future_mae,
                 future_r2=_r2(held_y, prediction),
                 persistence_mae=persistence_mae,
+                behaviour_history_mae=behaviour_history_mae,
                 train_mean_mae=train_mean_mae,
                 neural_improves_over_persistence=bool(future_mae < persistence_mae),
+                neural_improves_over_behaviour_history=bool(
+                    future_mae < behaviour_history_mae
+                ),
             )
         )
 
@@ -234,6 +261,7 @@ def evaluate_temporal_motor_latent_ladder(
         scores=tuple(scores),
         target_semantics=(
             "future synchronized kinematics from a PCA code fit on neural-history geometry only; "
+            "comparison includes a training-fitted behaviour-history-only autoregressive baseline; "
             "predictive adequacy is consumer-relative and does not certify motor-plan identity"
         ),
     )
