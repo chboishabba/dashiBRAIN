@@ -158,3 +158,71 @@ def test_stream_keeps_compressed_sidecar_when_request_fails(tmp_path, monkeypatc
     assert sidecar.exists()
     assert 0 < sidecar.stat().st_size < len(compressed)
     assert not output.exists()
+
+
+def test_resilient_stream_reenters_after_exhausted_retryable_http_error(tmp_path, monkeypatch):
+    member = RemoteZipMember(
+        name="nested.zip",
+        compressed_size=123,
+        uncompressed_size=456,
+        compression_method=8,
+        local_header_offset=0,
+        crc32=0,
+    )
+    output = tmp_path / "nested.zip"
+    sidecar = output.with_name(output.name + ".compressed.part")
+    calls = {"n": 0}
+    observed_offsets: list[int] = []
+
+    def fake_stream(url, m, out, **kwargs):
+        calls["n"] += 1
+        observed_offsets.append(sidecar.stat().st_size if sidecar.exists() else 0)
+        if calls["n"] == 1:
+            sidecar.write_bytes(b"x" * 37)
+            raise urllib.error.HTTPError(url, 504, "Gateway Time-out", {}, io.BytesIO())
+        Path(out).write_bytes(b"done")
+        sidecar.unlink(missing_ok=True)
+        return Path(out)
+
+    monkeypatch.setattr(remote_zip, "stream_remote_member_to_file", fake_stream)
+    monkeypatch.setattr(remote_zip.time, "sleep", lambda _: None)
+
+    result = remote_zip.stream_remote_member_to_file_resilient(
+        "https://example.test/archive",
+        member,
+        output,
+        transfer_max_attempts=2,
+        transfer_retry_base_seconds=0,
+        transfer_retry_cap_seconds=0,
+    )
+
+    assert result == output
+    assert calls["n"] == 2
+    assert observed_offsets == [0, 37]
+    assert output.read_bytes() == b"done"
+
+
+def test_resilient_stream_does_not_retry_nonretryable_http_error(tmp_path, monkeypatch):
+    member = RemoteZipMember("nested.zip", 1, 1, 0, 0, 0)
+    output = tmp_path / "nested.zip"
+    calls = {"n": 0}
+
+    def fake_stream(url, m, out, **kwargs):
+        calls["n"] += 1
+        raise urllib.error.HTTPError(url, 404, "Not Found", {}, io.BytesIO())
+
+    monkeypatch.setattr(remote_zip, "stream_remote_member_to_file", fake_stream)
+    monkeypatch.setattr(remote_zip.time, "sleep", lambda _: None)
+
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        remote_zip.stream_remote_member_to_file_resilient(
+            "https://example.test/archive",
+            member,
+            output,
+            transfer_max_attempts=4,
+            transfer_retry_base_seconds=0,
+            transfer_retry_cap_seconds=0,
+        )
+
+    assert excinfo.value.code == 404
+    assert calls["n"] == 1
