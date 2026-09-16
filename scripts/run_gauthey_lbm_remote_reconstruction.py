@@ -49,7 +49,11 @@ from dashi.io.gauthey_lbm_identity_receipts import (
     write_transport_interruption_receipt,
 )
 from dashi.io.out_of_core_numpy_pickle import load_numpy_pickle_out_of_core
-from dashi.io.remote_zip import HTTPRangeError, list_remote_zip, stream_remote_member_to_file
+from dashi.io.remote_zip import (
+    HTTPRangeError,
+    list_remote_zip,
+    stream_remote_member_to_file_resilient,
+)
 
 SOURCE_STEMS = (
     "GCaMP6f_04032024_a2_r1",
@@ -281,7 +285,7 @@ def main() -> None:
                     f"{member.uncompressed_size / 1e9:.2f} GB inner ZIP)"
                 )
                 try:
-                    stream_remote_member_to_file(
+                    stream_remote_member_to_file_resilient(
                         args.url,
                         member,
                         tmp_zip,
@@ -386,6 +390,7 @@ def main() -> None:
         "unresolved_output": str(unresolved_path),
         "trial_receipt_dir": str(trial_receipt_dir),
         "per_trial_checkpointing": True,
+        "whole_transfer_resume_retry": True,
         "source_containers_retained_for_resume": True,
         "out_of_core_pickle_ingestion": True,
         "correlation_block_rows": args.correlation_block_rows,
