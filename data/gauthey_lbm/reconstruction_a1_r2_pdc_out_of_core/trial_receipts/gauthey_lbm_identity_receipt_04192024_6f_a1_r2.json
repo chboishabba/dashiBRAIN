@@ -1,0 +1,15 @@
+{
+  "status": "gauthey_lbm_single_trial_exact_identity_receipt",
+  "trial_id": "04192024_6f_a1_r2",
+  "standalone_trial_receipt": true,
+  "searched_trial": true,
+  "exact_source_identities_recovered": 300,
+  "remote_archive_accessed": false,
+  "identity_output": "data/gauthey_lbm/reconstruction_a1_r2_pdc_out_of_core/trial_receipts/gauthey_lbm_selected_identities_04192024_6f_a1_r2.csv",
+  "identity_semantics": "exact trace equality to deposited selected row; not neuron identity",
+  "firewalls": {
+    "zero_matches_imply_zero_biological_contribution": false,
+    "trial_receipt_implies_replication": false,
+    "trial_receipt_implies_atlas_registration": false
+  }
+}

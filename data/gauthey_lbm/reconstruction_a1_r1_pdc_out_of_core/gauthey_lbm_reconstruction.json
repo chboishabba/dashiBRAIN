@@ -1,0 +1,23 @@
+{
+  "requested_trials": [
+    "04162024_6f_a1_r1"
+  ],
+  "processed_trials": [
+    "04162024_6f_a1_r1"
+  ],
+  "missing_requested_trials": [],
+  "deposited_selected_count": 1620,
+  "exact_source_identities_recovered": 158,
+  "unresolved_selected_rows": 1462,
+  "complete_identity_recovery": false,
+  "identity_output": "data/gauthey_lbm/reconstruction_a1_r1_pdc_out_of_core/gauthey_lbm_selected_identities_partial.csv",
+  "unresolved_output": "data/gauthey_lbm/reconstruction_a1_r1_pdc_out_of_core/gauthey_lbm_selected_unresolved_rows.csv",
+  "trial_receipt_dir": "data/gauthey_lbm/reconstruction_a1_r1_pdc_out_of_core/trial_receipts",
+  "per_trial_checkpointing": true,
+  "source_containers_retained_for_resume": true,
+  "out_of_core_pickle_ingestion": true,
+  "correlation_block_rows": 256,
+  "remote_archive_accessed": false,
+  "local_source_zip": "/mnt/truenas/comet-net/dashiBRAIN/gauthey_lbm/scratch/GCaMP6f_04162024_a1_r1.pdc.zip",
+  "identity_semantics": "exact trace equality to deposited selected row; not neuron identity"
+}

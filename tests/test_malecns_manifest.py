@@ -35,15 +35,25 @@ def test_manifest_expected_bytes_budget():
     assert total_bytes < 700_000_000
 
 
+def test_official_bulk_graph_is_available_without_entering_working_set_budget():
+    manifest = MaleCNSManifest()
+    full_graph = manifest.official_bulk_source("full_connection_graph")
+    assert full_graph.dataset_id == "male-cns:v1.0"
+    assert full_graph.can_pay_physical_connectivity is True
+    assert "significant-only" not in full_graph.gs_uri
+    assert "full_connection_graph" not in manifest.specs
+
+
 def test_manifest_provenance_graph_relations():
     manifest = MaleCNSManifest()
     graph = manifest.build_provenance_graph()
 
-    # Same animal + trial = SAME_TRIAL_CORROBORATION
+    # Shared dataset root alone must NOT be promoted to same-trial corroboration
+    # once the functional artifact lost its fabricated animal/trial provenance.
     rel_trial = classify_evidence_relation(
         graph, "functional_trial_calcium", "behaviour_fictrac_kinematics"
     )
-    assert rel_trial == EvidenceRelation.SAME_TRIAL_CORROBORATION
+    assert rel_trial == EvidenceRelation.INDEPENDENCE_UNDETERMINED
 
     # Distinct animals/datasets = CROSS_ANIMAL_REPLICATION
     rel_dataset = classify_evidence_relation(
