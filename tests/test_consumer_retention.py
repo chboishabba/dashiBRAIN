@@ -58,3 +58,28 @@ def test_empty_ensemble_rejected():
         audit_consumer_retention([], coarse_regional, laplacian_variation)
     with pytest.raises(ValueError):
         audit_commutation([], lambda x: x, coarse_regional, lambda x: x)
+
+def test_viewed_stimulus_does_not_decode_independent_concealed_target():
+    # Cross-lane contact with dashi_agda DMT PR #1243. These four worlds
+    # are invented, not EEG/fMRI participants or Brain-IT image examples.
+    # An observation revealing the viewed stimulus is perfect for *that*
+    # consumer but is not sufficient to reconstruct a concealed target.
+    worlds = [(viewed, secret) for viewed in (0, 1) for secret in (0, 1)]
+    viewed_observation = lambda world: world[0]
+    hidden_target = lambda world: world[1]
+    viewed = audit_consumer_retention(worlds, viewed_observation, viewed_observation)
+    hidden = audit_consumer_retention(worlds, viewed_observation, hidden_target)
+    assert viewed.factorises_on_sample
+    assert hidden.state_count == 4
+    assert hidden.fibre_count == 2
+    assert hidden.ambiguous_fibre_count == 2
+    assert not hidden.factorises_on_sample
+    assert hidden.collision is not None
+    assert hidden.collision.left_target != hidden.collision.right_target
+    # An invalid experiment leaking the secret into the observed channel
+    # would appear to achieve complete information recovery.
+    leaked = audit_consumer_retention(worlds, lambda world: world, hidden_target)
+    assert leaked.factorises_on_sample
+    # A finite retained/nonretained consumer receipt does not supply
+    # independent physical agent identity or an experimental data result.
+
