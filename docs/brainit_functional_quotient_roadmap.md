@@ -55,3 +55,14 @@ agda -i . DASHI/Biology/BrainITValidation.agda
 ```
 
 The absence of a new external dataset/checkpoint receipt is an intentional **open frontier**, not an implied pass.
+
+## Cross-lane DMT consumer: no external-information promotion
+
+On 24 October 2026, the existing finite audit gained a source-independent regression test cross-linked to [dashi_agda DMT PR #1243](https://github.com/chboishabba/dashi_agda/pull/1243). The new test constructs four invented combinations of viewed stimulus and independently concealed target. The same perfect viewed-stimulus observation retains the **viewed stimulus** consumer but has an explicit collision for the **concealed target** consumer. A deliberately leaked observation containing the secret then retains the secret perfectly, demonstrating how failure of blinding changes admissible conclusions. It does **not** add a clinical DMT measurement, Brain-IT checkpoint, NSD image result, or external-agent observation.
+
+This directly **reuses** the original local audit_consumer_retention rather than inventing another consumer-fibre calculus. The DMT branch's own Agda consumer proof imports the established generic CoarseFineFabricCalculusExact, not the unmerged Brain-IT PR #1121, so both PRs can be independently reviewed and merged safely.
+
+The shared highest-alpha method is *consumer-relative prediction with source/session provenance*, not transfer of either experimental dataset or a literal neural kernel. Brain-IT's arXiv:2510.25976v2 published values remain the source owner's evidence. Timmermann et al. PNAS 2023 (DOI 10.1073/pnas.2218949120) is the independently credited DMT EEG/fMRI source; its GitHub repository timmer500/DMT_Imaging was inspected at revision b35701d88d904e2f602164ff2eae0fc879772078. A separate fail-closed DMT-file admission and train/test split check now lives in PR #1243, without copying empirical data into this Drosophila/Brain-IT repository.
+
+**Next empirical admission:** obtain rights-reviewed, hash-locked source files, participant/session/condition splits, matched time axes, and replay an original analysis. Separately test any claim of unexpected concealed-target information under adversarial controls. Neither a source-side Brain-IT visual reconstruction nor a toy consumer collision identifies independently conscious DMT entities. No data or human research task is claimed performed by this cross-reference.
+
