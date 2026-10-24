@@ -66,3 +66,17 @@ The shared highest-alpha method is *consumer-relative prediction with source/ses
 
 **Next empirical admission:** obtain rights-reviewed, hash-locked source files, participant/session/condition splits, matched time axes, and replay an original analysis. Separately test any claim of unexpected concealed-target information under adversarial controls. Neither a source-side Brain-IT visual reconstruction nor a toy consumer collision identifies independently conscious DMT entities. No data or human research task is claimed performed by this cross-reference.
 
+
+
+## Exact-head finite consumer-test receipt (2026-10-24 Brisbane)
+
+The current GitHub PR #9 runtime \`dashi/analysis/consumer_retention.py\` at Git blob **384a9b1d7082857000128635259c9b1a9d989f80** and its \`tests/test_consumer_retention.py\` at Git blob **89fb3b6391331f299b7dc6e37ec4bc34331a3646** were reconstructed locally with **byte-for-byte matching Git blob SHA1**. Against that exact pair:
+
+\`\`\`text
+python -m pytest -q tests/test_consumer_retention.py
+...... [100%]
+6 passed in 0.03s
+\`\`\`
+
+The run required only the Python standard library and pytest; the package's two parent \`__init__.py\` entries were supplied solely to allow local import. **This is a valid focused Python exact-content test receipt**, not GitHub Actions, an Agda kernel proof, or a replay of a Brain-IT/NSD checkpoint. The additional \`tests/test_functional_bridge.py\` tests are outside this exact-content receipt and remain pending for the combined acceptance command. A matching source-level data consumer is implemented on sibling Agda DMT PR #1243; its new paired-fMRI evaluator has five locally passed *synthetic prototype* tests but no actual DMT participant data analysis.
+
