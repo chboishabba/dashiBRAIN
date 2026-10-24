@@ -2,6 +2,16 @@
 
 This repo implements the DASHI kernel formalism for the Drosophila hemibrain. The objective is to detect kernel-closed (or low-defect) ternary fields that persist across coarse-grainings, not to fit ML models.
 
+## Brain-IT / functional observation cross-pollination
+
+The finite consumer-retention and coarse-dynamics audit is in
+[`dashi/analysis/consumer_retention.py`](dashi/analysis/consumer_retention.py),
+with reproducible toy tests in [`tests/test_consumer_retention.py`](tests/test_consumer_retention.py).
+The source-attributed cross-modal experimental plan is
+[`docs/brainit_functional_quotient_roadmap.md`](docs/brainit_functional_quotient_roadmap.md).
+Human BOLD fMRI, fly optical recordings, anatomical connectomes, and Brain-IT
+learned functional clusters remain distinct; no new NSD result is asserted.
+
 ## Guiding principles
 - Kernel-first: all downstream work respects kernel closure/defect semantics.
 - Reproducibility over speed: correctness and invariance before performance.
