@@ -1,11 +1,11 @@
 # Changelog
 
 ## Unreleased
-- Added the AO high-resolution discriminator on the existing consumer-retention runtime: K=50/K=100 spectral admission, five distinct eigenspace/topic/subtopic/fibre/goal levels, implementation-noise token rejection, and above-MP-bulk-edge index selection.
+- Added the AO high-resolution discriminator on the existing consumer-retention runtime: K=50/K=100 spectral admission, five distinct eigenspace/topic/subtopic/fibre/goal levels, implementation-noise token rejection, above-MP-bulk-edge index selection, primary/subtopic threshold components, and deterministic complete-link fibres.
 - Added deterministic full W=20 scheduling over unblocked Pareto-eligible goals with pairwise disjoint typed support; the scheduler fails closed when twenty independent goals are unavailable.
 - Added a literal finite Max Cut audit with boundary vertices and exact ±1 Laplacian identity `x^T L x = 4 * cut-edge count`; optional SDP upper bounds are validation receipts only and do not create physics authority.
 - Added focused tests and CI for the discriminator while preserving the existing collision/retention and vertex-map orbit renderer.
-- Local isolated replay of the new discriminator logic passed. Exact GitHub-branch pytest status is delegated to the new focused workflow because this runtime cannot resolve github.com for a clone.
+- Local isolated replay of the new discriminator and finite hierarchy logic passed. Exact GitHub-branch pytest status is delegated to the new focused workflow because this runtime cannot resolve github.com for a clone.
 - Added Brain-IT cross-modal consumer-retention and exact finite commutation audits (toy diagnostics only), tests, and an evidence-gated roadmap; no real NSD or learned-model result asserted.
 - Added DASHI sprint documentation (`README`, formal axioms, dataset and gauge specs, sprint plan) and TODOs for sprint 1–2.
 - Scaffolded Python package structure (`dashi/`) with loaders, baseline residuals, valuation init, kernel operator/flow modules.
