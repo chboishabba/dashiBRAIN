@@ -80,3 +80,76 @@ python -m pytest -q tests/test_consumer_retention.py
 
 The run required only the Python standard library and pytest; the package's two parent \`__init__.py\` entries were supplied solely to allow local import. **This is a valid focused Python exact-content test receipt**, not GitHub Actions, an Agda kernel proof, or a replay of a Brain-IT/NSD checkpoint. The additional \`tests/test_functional_bridge.py\` tests are outside this exact-content receipt and remain pending for the combined acceptance command. A matching source-level data consumer is implemented on sibling Agda DMT PR #1243; its new paired-fMRI evaluator has five locally passed *synthetic prototype* tests but no actual DMT participant data analysis.
 
+
+
+## AO fleet discriminator convergence — 2026-10-29
+
+The consumer-retention runtime now also serves as the finite discriminator surface for AO fleet debugging.
+
+The golden authority is the sibling `dashi_agda` convergence branch. Python does not create proof authority.
+
+### Five distinct levels
+
+The runtime must not collapse these objects:
+
+1. **MP eigenspace basis** — selected spectral vectors with `lambda_i > lambda_plus`.
+2. **Primary topics** — thresholded macro quotients of admitted spectral representations.
+3. **Subtopics** — local branches below a primary topic.
+4. **Fibres** — complete-link cliques under the declared near relation.
+5. **Goals** — typed, unblocked deliverables eligible for dispatch.
+
+Supported spectral truncations are exactly `K=50` and `K=100`.
+
+### Lexical admission
+
+Topic labels are rejected before clustering when they are raw implementation noise.
+
+Rejected classes include:
+
+- hexadecimal literals such as `0xffff1000`;
+- pointer-like or memory-address strings such as `0xffff1000()`;
+- UI-control fragments such as `collapse(property: auto)`;
+- raw HTML/DOM tokens.
+
+A rejected label cannot become a primary topic or subtopic.
+
+### Fleet concurrency
+
+A valid full fleet schedule has exactly twenty assigned worker slots.
+
+Every assigned goal must be unblocked.
+
+Every assigned goal must be Pareto eligible.
+
+The scheduler chooses the top-ranked compatible goals.
+
+Every two distinct scheduled goals must have disjoint typed support.
+
+A one-worker serial loop or modulo-eight reuse is not a valid W=20 schedule.
+
+### Combinatorial Max Cut
+
+The Python diagnostic uses a literal finite graph cut.
+
+For the ±1 cut signal on an undirected unweighted graph, the audit checks the exact identity:
+
+`x^T L x = 4 * cut_edge_count`.
+
+An optional SDP upper-bound receipt may be checked against the cut weight.
+
+The runtime does not solve an SDP.
+
+The runtime does not infer a Yang–Mills equation or Navier–Stokes estimate from a graph cut.
+
+Physics reuse requires an explicit same-object adapter on the golden formal side.
+
+### Verification gates
+
+- token-noise regression;
+- K=50/K=100 admission and all-other-K rejection;
+- hierarchy receipt keeps five levels distinct;
+- twenty independent goals fill twenty slots;
+- fewer than twenty compatible goals fail loudly;
+- typed-support overlap prevents concurrent dispatch;
+- finite Max Cut Laplacian identity is exact on deterministic fixtures;
+- existing vertex-map orbit rendering remains deterministic.
