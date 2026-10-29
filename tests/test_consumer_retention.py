@@ -4,6 +4,8 @@ import pytest
 from dashi.analysis.consumer_retention import (
     audit_commutation,
     audit_consumer_retention,
+    render_vertex_map_orbit_svg,
+    write_vertex_map_orbit_svg,
 )
 
 
@@ -83,3 +85,63 @@ def test_viewed_stimulus_does_not_decode_independent_concealed_target():
     # A finite retained/nonretained consumer receipt does not supply
     # independent physical agent identity or an experimental data result.
 
+
+
+def test_vertex_map_orbit_svg_colours_target_by_map_distance():
+    source = [(0.0, 0.0), (1.0, 0.0), (0.0, 2.0)]
+    target = [(0.0, 0.0), (2.0, 0.0), (0.0, 1.0)]
+    svg = render_vertex_map_orbit_svg(
+        source,
+        target,
+        {0: 0, 1: 1, 2: 2},
+        show_source=False,
+    )
+    assert '<svg' in svg
+    assert 'data-layer="target"' in svg
+    assert 'data-map-distance="0"' in svg
+    assert svg.count('data-map-distance="1"') == 2
+    assert 'data-layer="source"' not in svg
+    assert 'data-layer="correspondence"' not in svg
+
+
+def test_vertex_map_orbit_svg_exposes_collision_and_subsamples_lines():
+    source = [(0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (3.0, 0.0), (4.0, 0.0)]
+    target = [(0.0, 0.0), (4.0, 0.0)]
+    mapping = {0: 0, 1: 0, 2: 0, 3: 1, 4: 1}
+    svg = render_vertex_map_orbit_svg(
+        source,
+        target,
+        mapping,
+        show_source=True,
+        max_correspondence_lines=2,
+    )
+    assert 'data-layer="source"' in svg
+    assert svg.count('data-layer="correspondence"') == 2
+    assert 'data-map-preimage-count="3"' in svg
+    assert 'data-map-preimage-count="2"' in svg
+    # Colliding target vertices use the maximum source-to-target map distance.
+    assert 'data-map-distance="2"' in svg
+    assert 'data-map-distance="1"' in svg
+
+
+def test_vertex_map_orbit_svg_write_is_deterministic(tmp_path):
+    source = [(0.0, 0.0), (1.0, 1.0)]
+    target = [(0.0, 0.0), (2.0, 2.0)]
+    mapping = {0: 0, 1: 1}
+    expected = render_vertex_map_orbit_svg(source, target, mapping)
+    output = tmp_path / "vertex-map-orbit.svg"
+    written = write_vertex_map_orbit_svg(
+        output,
+        source,
+        target,
+        mapping,
+    )
+    assert written == output
+    assert output.read_text(encoding="utf-8") == expected
+
+
+def test_vertex_map_orbit_svg_rejects_bad_correspondence_indices():
+    with pytest.raises(ValueError):
+        render_vertex_map_orbit_svg([(0.0, 0.0)], [(0.0, 0.0)], {1: 0})
+    with pytest.raises(ValueError):
+        render_vertex_map_orbit_svg([(0.0, 0.0)], [(0.0, 0.0)], {0: 1})
