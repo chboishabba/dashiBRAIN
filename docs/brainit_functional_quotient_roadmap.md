@@ -113,6 +113,18 @@ Rejected classes include:
 
 A rejected label cannot become a primary topic or subtopic.
 
+### Finite hierarchy construction
+
+The discriminator constructs primary topics as connected components of the declared primary-distance threshold graph.
+
+It constructs subtopics as connected components at the tighter subtopic threshold inside each primary topic.
+
+It constructs fibres with deterministic complete-link admission at the tightest threshold. Every two members of one fibre must therefore be within the fibre threshold.
+
+The thresholds must satisfy `fibre <= subtopic <= primary`.
+
+Noise labels are removed before all three constructions.
+
 ### Fleet concurrency
 
 A valid full fleet schedule has exactly twenty assigned worker slots.
