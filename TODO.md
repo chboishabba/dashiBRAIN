@@ -34,3 +34,20 @@
 - [x] Add ROI aggregation (metadata-driven) and show defect collapse under biologically meaningful coarse blocks.
 - [x] Add hop-radius aggregation to test minimal locality preservation; log collapse thresholds (r=1,2 tested).
 - [ ] Add voxel aggregation using soma/synapse coordinates once exported; rerun defect curves (blocked: missing coords in current metadata export).
+
+
+## AO fleet discriminator — 2026-10-29
+
+- [ ] Reject hexadecimal literals and memory-address noise before topic admission.
+- [ ] Reject raw UI and DOM tokens before topic admission.
+- [ ] Accept only K=50 or K=100 spectral truncation receipts.
+- [ ] Keep eigenspace, primary topic, subtopic, fibre, and goal as separate runtime levels.
+- [ ] Require lambda_i > lambda_plus for selected spectral basis rows.
+- [ ] Build a deterministic full W=20 schedule from top Pareto-ranked unblocked goals.
+- [ ] Require pairwise disjoint typed support for all concurrent goals.
+- [ ] Fail loudly when twenty compatible unblocked goals do not exist.
+- [ ] Add deterministic finite Max Cut diagnostics.
+- [ ] Check x^T L x = 4 * cut-edge count on undirected unweighted fixtures.
+- [ ] Keep optional SDP upper-bound receipts non-promoting.
+- [ ] Preserve existing collision/retention and vertex-map renderer behavior.
+- [ ] Run focused tests and append the changelog only after implementation.
