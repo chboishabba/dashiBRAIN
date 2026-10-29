@@ -1,4 +1,5 @@
 """Finite toy receipts only: no NSD, Brain-IT checkpoints or fly BOLD data."""
+import math
 import pytest
 
 from dashi.analysis.consumer_retention import (
@@ -8,6 +9,7 @@ from dashi.analysis.consumer_retention import (
     write_vertex_map_orbit_svg,
     classify_topic_token,
     audit_spectral_stratification,
+    stratify_representations,
     FleetGoal,
     schedule_full_twenty,
     audit_max_cut,
@@ -279,4 +281,42 @@ def test_max_cut_optional_sdp_receipt_is_only_an_upper_bound_check():
             edges=[(0, 1), (1, 2), (0, 2)],
             left_vertices={0},
             sdp_upper_bound=1.0,
+        )
+
+
+def test_finite_hierarchy_builds_primary_subtopic_and_complete_link_fibres():
+    hierarchy = stratify_representations(
+        {
+            "A": (0.00, 0.0),
+            "B": (0.04, 0.0),
+            "C": (0.08, 0.0),
+            "D": (1.00, 0.0),
+            "0xffff1000": (0.02, 0.0),
+        },
+        primary_threshold=0.20,
+        subtopic_threshold=0.05,
+        fibre_threshold=0.05,
+    )
+    assert hierarchy.admitted_labels == ("A", "B", "C", "D")
+    assert hierarchy.primary_topics == (("A", "B", "C"), ("D",))
+    # Threshold components keep the local A-B-C chain as one subtopic.
+    assert hierarchy.subtopics == (("A", "B", "C"), ("D",))
+    # Complete-link fibres cannot put A and C together because distance=.08>.05.
+    assert hierarchy.fibres == (("A", "B"), ("C",), ("D",))
+    for fibre in hierarchy.fibres:
+        for i, left in enumerate(fibre):
+            for right in fibre[i + 1:]:
+                assert math.dist(
+                    hierarchy.representations[left],
+                    hierarchy.representations[right],
+                ) <= hierarchy.fibre_threshold
+
+
+def test_finite_hierarchy_rejects_inverted_threshold_order():
+    with pytest.raises(ValueError, match="fibre <= subtopic <= primary"):
+        stratify_representations(
+            {"A": (0.0, 0.0), "B": (0.1, 0.0)},
+            primary_threshold=0.05,
+            subtopic_threshold=0.10,
+            fibre_threshold=0.01,
         )
