@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 from pathlib import Path
+import re
 from typing import Callable, Generic, Hashable, Iterable, Mapping, Sequence, TypeVar
 
 Fine = TypeVar("Fine")
@@ -321,3 +322,380 @@ def write_vertex_map_orbit_svg(
         encoding="utf-8",
     )
     return output
+
+
+_HEX_LITERAL_RE = re.compile(r"^0[xX][0-9a-fA-F]+$")
+_MEMORY_ADDRESS_RE = re.compile(r"^0[xX][0-9a-fA-F]+(?:\(\)|[\[\]+*-].*)$")
+_RAW_DOM_RE = re.compile(r"^\s*</?[A-Za-z][^>]*>\s*$")
+_RAW_UI_RE = re.compile(
+    r"^(?:collapse|expand|button|menu|dropdown|tooltip|modal)"
+    r"(?:\s*\(|\s*:|\s*$)",
+    re.IGNORECASE,
+)
+
+
+def classify_topic_token(token: str) -> str:
+    """Classify one candidate topic label before spectral quotienting.
+
+    The classifier is deliberately conservative. It rejects exact lexical
+    forms that are implementation artifacts. It does not infer semantics.
+    """
+    value = token.strip()
+    if not value:
+        return "raw_ui_token_noise"
+    if _MEMORY_ADDRESS_RE.fullmatch(value):
+        return "memory_address_noise"
+    if _HEX_LITERAL_RE.fullmatch(value):
+        return "hex_literal_noise"
+    if _RAW_DOM_RE.fullmatch(value):
+        return "raw_dom_token_noise"
+    if _RAW_UI_RE.match(value) or "property:" in value.lower():
+        return "raw_ui_token_noise"
+    return "semantic_token"
+
+
+def _admitted_topic_labels(labels: Iterable[str]) -> tuple[str, ...]:
+    return tuple(
+        label
+        for label in labels
+        if classify_topic_token(label) == "semantic_token"
+    )
+
+
+@dataclass(frozen=True)
+class RepresentationHierarchyAudit:
+    """Finite threshold hierarchy over admitted representation labels."""
+
+    representations: Mapping[str, tuple[float, ...]]
+    admitted_labels: tuple[str, ...]
+    primary_topics: tuple[tuple[str, ...], ...]
+    subtopics: tuple[tuple[str, ...], ...]
+    fibres: tuple[tuple[str, ...], ...]
+    primary_threshold: float
+    subtopic_threshold: float
+    fibre_threshold: float
+
+
+def _representation_distance(
+    representations: Mapping[str, tuple[float, ...]],
+    left: str,
+    right: str,
+) -> float:
+    return math.dist(representations[left], representations[right])
+
+
+def _threshold_components(
+    labels: Sequence[str],
+    representations: Mapping[str, tuple[float, ...]],
+    threshold: float,
+) -> tuple[tuple[str, ...], ...]:
+    """Return deterministic connected components of a threshold graph."""
+    unseen = set(labels)
+    components: list[tuple[str, ...]] = []
+    for root in sorted(labels):
+        if root not in unseen:
+            continue
+        unseen.remove(root)
+        stack = [root]
+        component: list[str] = []
+        while stack:
+            current = stack.pop()
+            component.append(current)
+            neighbours = [
+                candidate
+                for candidate in sorted(unseen)
+                if _representation_distance(
+                    representations, current, candidate
+                ) <= threshold
+            ]
+            for candidate in neighbours:
+                unseen.remove(candidate)
+                stack.append(candidate)
+        components.append(tuple(sorted(component)))
+    return tuple(components)
+
+
+def _complete_link_fibres(
+    labels: Sequence[str],
+    representations: Mapping[str, tuple[float, ...]],
+    threshold: float,
+) -> tuple[tuple[str, ...], ...]:
+    """Build deterministic cliques whose every pair is within threshold."""
+    fibres: list[list[str]] = []
+    for label in sorted(labels):
+        placed = False
+        for fibre in fibres:
+            if all(
+                _representation_distance(representations, label, member)
+                <= threshold
+                for member in fibre
+            ):
+                fibre.append(label)
+                placed = True
+                break
+        if not placed:
+            fibres.append([label])
+    return tuple(tuple(fibre) for fibre in fibres)
+
+
+def stratify_representations(
+    representations: Mapping[str, Sequence[float]],
+    *,
+    primary_threshold: float,
+    subtopic_threshold: float,
+    fibre_threshold: float,
+) -> RepresentationHierarchyAudit:
+    """Construct primary topics, subtopics, and complete-link fibres.
+
+    Primary topics are connected components of the declared macro threshold
+    graph. Subtopics are connected components at the tighter local threshold
+    inside each primary topic. Fibres use complete-link admission at the
+    tightest threshold. Noise labels are removed before every construction.
+    """
+    thresholds = (
+        float(fibre_threshold),
+        float(subtopic_threshold),
+        float(primary_threshold),
+    )
+    if not all(math.isfinite(value) and value >= 0.0 for value in thresholds):
+        raise ValueError("hierarchy thresholds must be finite and nonnegative")
+    if not (thresholds[0] <= thresholds[1] <= thresholds[2]):
+        raise ValueError(
+            "hierarchy thresholds must satisfy fibre <= subtopic <= primary"
+        )
+
+    clean: dict[str, tuple[float, ...]] = {}
+    dimension: int | None = None
+    for label in sorted(representations):
+        if classify_topic_token(label) != "semantic_token":
+            continue
+        coords = tuple(float(value) for value in representations[label])
+        if not coords or not all(math.isfinite(value) for value in coords):
+            raise ValueError("representation coordinates must be finite")
+        if dimension is None:
+            dimension = len(coords)
+        elif len(coords) != dimension:
+            raise ValueError("all representations must have one dimension")
+        clean[label] = coords
+    if not clean:
+        raise ValueError("at least one semantic representation is required")
+
+    labels = tuple(sorted(clean))
+    primary_topics = _threshold_components(
+        labels, clean, thresholds[2]
+    )
+
+    subtopics_list: list[tuple[str, ...]] = []
+    fibres_list: list[tuple[str, ...]] = []
+    for primary in primary_topics:
+        local_subtopics = _threshold_components(
+            primary, clean, thresholds[1]
+        )
+        subtopics_list.extend(local_subtopics)
+        for subtopic in local_subtopics:
+            fibres_list.extend(
+                _complete_link_fibres(
+                    subtopic, clean, thresholds[0]
+                )
+            )
+
+    return RepresentationHierarchyAudit(
+        representations=clean,
+        admitted_labels=labels,
+        primary_topics=primary_topics,
+        subtopics=tuple(subtopics_list),
+        fibres=tuple(fibres_list),
+        primary_threshold=thresholds[2],
+        subtopic_threshold=thresholds[1],
+        fibre_threshold=thresholds[0],
+    )
+
+
+@dataclass(frozen=True)
+class SpectralStratificationAudit:
+    """Finite runtime receipt for the golden five-level AO hierarchy."""
+
+    k: int
+    lambda_plus: float
+    selected_eigen_indices: tuple[int, ...]
+    primary_topics: tuple[str, ...]
+    subtopics: tuple[str, ...]
+    fibre_count: int
+    unblocked_goal_count: int
+    levels: tuple[str, ...] = (
+        "eigenspace",
+        "primary_topic",
+        "subtopic",
+        "fibre",
+        "goal",
+    )
+
+
+def audit_spectral_stratification(
+    *,
+    eigenvalues: Sequence[float],
+    lambda_plus: float,
+    k: int,
+    primary_labels: Iterable[str],
+    subtopic_labels: Iterable[str],
+    fibre_count: int,
+    unblocked_goal_count: int,
+) -> SpectralStratificationAudit:
+    """Validate a finite spectral discriminator receipt.
+
+    Numeric eigendecomposition remains upstream. This function checks the
+    golden admission contract only: K is 50 or 100, selected indices satisfy
+    lambda_i > lambda_plus, and implementation-noise labels are removed before
+    topic/subtopic admission.
+    """
+    if k not in (50, 100):
+        raise ValueError("spectral truncation K must be 50 or 100")
+    if not math.isfinite(lambda_plus):
+        raise ValueError("lambda_plus must be finite")
+    if fibre_count < 0 or unblocked_goal_count < 0:
+        raise ValueError("fibre and goal counts must be nonnegative")
+    clean_eigenvalues = tuple(float(value) for value in eigenvalues)
+    if not all(math.isfinite(value) for value in clean_eigenvalues):
+        raise ValueError("eigenvalues must be finite")
+    selected = tuple(
+        index
+        for index, value in enumerate(clean_eigenvalues[:k])
+        if value > lambda_plus
+    )
+    return SpectralStratificationAudit(
+        k=k,
+        lambda_plus=float(lambda_plus),
+        selected_eigen_indices=selected,
+        primary_topics=_admitted_topic_labels(primary_labels),
+        subtopics=_admitted_topic_labels(subtopic_labels),
+        fibre_count=fibre_count,
+        unblocked_goal_count=unblocked_goal_count,
+    )
+
+
+@dataclass(frozen=True)
+class FleetGoal:
+    """One typed AO deliverable eligible for independent dispatch."""
+
+    goal_id: str
+    pareto_rank: int
+    unblocked: bool
+    pareto_eligible: bool
+    typed_support: frozenset[str]
+
+
+def _no_typed_meet(left: FleetGoal, right: FleetGoal) -> bool:
+    return left.typed_support.isdisjoint(right.typed_support)
+
+
+def schedule_full_twenty(goals: Iterable[FleetGoal]) -> tuple[FleetGoal, ...]:
+    """Select exactly 20 top-ranked pairwise-independent unblocked goals.
+
+    Lower integer pareto_rank is preferred. Ties are resolved by goal_id.
+    The function fails closed when it cannot fill all twenty slots.
+    """
+    candidates = sorted(
+        (
+            goal
+            for goal in goals
+            if goal.unblocked and goal.pareto_eligible
+        ),
+        key=lambda goal: (goal.pareto_rank, goal.goal_id),
+    )
+    selected: list[FleetGoal] = []
+    for goal in candidates:
+        if not goal.goal_id:
+            raise ValueError("goal_id must be nonempty")
+        if any(goal.goal_id == prior.goal_id for prior in selected):
+            continue
+        if all(_no_typed_meet(goal, prior) for prior in selected):
+            selected.append(goal)
+            if len(selected) == 20:
+                return tuple(selected)
+    raise ValueError(
+        "full concurrency requires 20 pairwise noTypedMeet "
+        "unblocked Pareto-eligible goals"
+    )
+
+
+@dataclass(frozen=True)
+class MaxCutAudit:
+    """Exact finite unweighted cut receipt. This is not a physics theorem."""
+
+    vertex_count: int
+    edge_count: int
+    cut_edge_count: int
+    boundary_vertices: frozenset[int]
+    laplacian_quadratic: int
+    sdp_upper_bound: float | None
+    cut_within_sdp_bound: bool | None
+
+
+def audit_max_cut(
+    *,
+    vertex_count: int,
+    edges: Iterable[tuple[int, int]],
+    left_vertices: set[int] | frozenset[int],
+    sdp_upper_bound: float | None = None,
+) -> MaxCutAudit:
+    """Audit a literal finite two-way cut and its ±1 Laplacian identity.
+
+    For each undirected unit-weight edge, the signal contribution
+    (x_u - x_v)^2 is 4 exactly when the edge crosses the cut.
+    """
+    if vertex_count <= 0:
+        raise ValueError("vertex_count must be positive")
+    left = frozenset(left_vertices)
+    if any(vertex < 0 or vertex >= vertex_count for vertex in left):
+        raise ValueError("left vertex index out of range")
+
+    normalized_edges: list[tuple[int, int]] = []
+    seen: set[tuple[int, int]] = set()
+    for raw_u, raw_v in edges:
+        u, v = int(raw_u), int(raw_v)
+        if u < 0 or u >= vertex_count or v < 0 or v >= vertex_count:
+            raise ValueError("edge vertex index out of range")
+        if u == v:
+            raise ValueError("self edges are not valid cut edges")
+        edge = (min(u, v), max(u, v))
+        if edge in seen:
+            raise ValueError("duplicate undirected edge")
+        seen.add(edge)
+        normalized_edges.append(edge)
+
+    cut_edges: list[tuple[int, int]] = []
+    boundary: set[int] = set()
+    quadratic = 0
+    for u, v in normalized_edges:
+        xu = 1 if u in left else -1
+        xv = 1 if v in left else -1
+        contribution = (xu - xv) ** 2
+        quadratic += contribution
+        if contribution:
+            cut_edges.append((u, v))
+            boundary.add(u)
+            boundary.add(v)
+
+    expected = 4 * len(cut_edges)
+    if quadratic != expected:
+        raise AssertionError("finite cut Laplacian identity failed")
+
+    if sdp_upper_bound is None:
+        within = None
+    else:
+        bound = float(sdp_upper_bound)
+        if not math.isfinite(bound):
+            raise ValueError("SDP upper bound must be finite")
+        if len(cut_edges) > bound:
+            raise ValueError("cut weight exceeds supplied SDP upper bound")
+        within = True
+
+    return MaxCutAudit(
+        vertex_count=vertex_count,
+        edge_count=len(normalized_edges),
+        cut_edge_count=len(cut_edges),
+        boundary_vertices=frozenset(boundary),
+        laplacian_quadratic=quadratic,
+        sdp_upper_bound=None if sdp_upper_bound is None else float(sdp_upper_bound),
+        cut_within_sdp_bound=within,
+    )

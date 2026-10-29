@@ -1,4 +1,5 @@
 """Finite toy receipts only: no NSD, Brain-IT checkpoints or fly BOLD data."""
+import math
 import pytest
 
 from dashi.analysis.consumer_retention import (
@@ -6,6 +7,12 @@ from dashi.analysis.consumer_retention import (
     audit_consumer_retention,
     render_vertex_map_orbit_svg,
     write_vertex_map_orbit_svg,
+    classify_topic_token,
+    audit_spectral_stratification,
+    stratify_representations,
+    FleetGoal,
+    schedule_full_twenty,
+    audit_max_cut,
 )
 
 
@@ -145,3 +152,171 @@ def test_vertex_map_orbit_svg_rejects_bad_correspondence_indices():
         render_vertex_map_orbit_svg([(0.0, 0.0)], [(0.0, 0.0)], {1: 0})
     with pytest.raises(ValueError):
         render_vertex_map_orbit_svg([(0.0, 0.0)], [(0.0, 0.0)], {0: 1})
+
+
+def test_topic_filter_rejects_hex_memory_ui_and_dom_noise():
+    assert classify_topic_token("0xffff1000") == "hex_literal_noise"
+    assert classify_topic_token("0xffff1000()") == "memory_address_noise"
+    assert classify_topic_token("collapse(property: auto)") == "raw_ui_token_noise"
+    assert classify_topic_token("<div class='topic'>") == "raw_dom_token_noise"
+    assert classify_topic_token("Yang-Mills reflection positivity") == "semantic_token"
+
+
+def test_spectral_stratification_supports_only_k50_or_k100_and_filters_noise():
+    receipt = audit_spectral_stratification(
+        eigenvalues=[12.0, 7.0, 4.0, 1.0],
+        lambda_plus=3.0,
+        k=50,
+        primary_labels=[
+            "Yang-Mills",
+            "0xffff1000",
+            "Navier-Stokes",
+            "collapse(property: auto)",
+        ],
+        subtopic_labels=["OS positivity", "<span>", "commutator"],
+        fibre_count=9,
+        unblocked_goal_count=20,
+    )
+    assert receipt.k == 50
+    assert receipt.selected_eigen_indices == (0, 1, 2)
+    assert receipt.primary_topics == ("Yang-Mills", "Navier-Stokes")
+    assert receipt.subtopics == ("OS positivity", "commutator")
+    assert receipt.levels == (
+        "eigenspace",
+        "primary_topic",
+        "subtopic",
+        "fibre",
+        "goal",
+    )
+    with pytest.raises(ValueError):
+        audit_spectral_stratification(
+            eigenvalues=[4.0],
+            lambda_plus=3.0,
+            k=64,
+            primary_labels=["topic"],
+            subtopic_labels=["subtopic"],
+            fibre_count=1,
+            unblocked_goal_count=1,
+        )
+
+
+def test_full_twenty_schedule_uses_all_slots_in_pareto_order():
+    goals = [
+        FleetGoal(
+            goal_id=f"g{i:02d}",
+            pareto_rank=i,
+            unblocked=True,
+            pareto_eligible=True,
+            typed_support=frozenset({f"surface-{i:02d}"}),
+        )
+        for i in range(25)
+    ]
+    schedule = schedule_full_twenty(goals)
+    assert len(schedule) == 20
+    assert tuple(goal.goal_id for goal in schedule) == tuple(
+        f"g{i:02d}" for i in range(20)
+    )
+    assert len({surface for goal in schedule for surface in goal.typed_support}) == 20
+
+
+def test_full_twenty_schedule_fails_when_independent_capacity_is_insufficient():
+    goals = [
+        FleetGoal(
+            goal_id=f"g{i:02d}",
+            pareto_rank=i,
+            unblocked=True,
+            pareto_eligible=True,
+            typed_support=frozenset({"shared"} if i < 2 else {f"surface-{i:02d}"}),
+        )
+        for i in range(20)
+    ]
+    with pytest.raises(ValueError, match="20 pairwise noTypedMeet"):
+        schedule_full_twenty(goals)
+
+
+def test_full_twenty_schedule_ignores_blocked_and_ineligible_goals():
+    goals = [
+        FleetGoal("blocked", -2, False, True, frozenset({"blocked"})),
+        FleetGoal("ineligible", -1, True, False, frozenset({"ineligible"})),
+    ] + [
+        FleetGoal(
+            goal_id=f"g{i:02d}",
+            pareto_rank=i,
+            unblocked=True,
+            pareto_eligible=True,
+            typed_support=frozenset({f"surface-{i:02d}"}),
+        )
+        for i in range(20)
+    ]
+    schedule = schedule_full_twenty(goals)
+    assert "blocked" not in {goal.goal_id for goal in schedule}
+    assert "ineligible" not in {goal.goal_id for goal in schedule}
+
+
+def test_finite_max_cut_matches_laplacian_quadratic_identity():
+    audit = audit_max_cut(
+        vertex_count=4,
+        edges=[(0, 1), (1, 2), (2, 3), (3, 0), (0, 2)],
+        left_vertices={0, 2},
+    )
+    assert audit.cut_edge_count == 4
+    assert audit.boundary_vertices == frozenset({0, 1, 2, 3})
+    assert audit.laplacian_quadratic == 4 * audit.cut_edge_count
+    assert audit.laplacian_quadratic == 16
+
+
+def test_max_cut_optional_sdp_receipt_is_only_an_upper_bound_check():
+    audit = audit_max_cut(
+        vertex_count=3,
+        edges=[(0, 1), (1, 2), (0, 2)],
+        left_vertices={0},
+        sdp_upper_bound=3.0,
+    )
+    assert audit.cut_edge_count == 2
+    assert audit.sdp_upper_bound == 3.0
+    assert audit.cut_within_sdp_bound
+    with pytest.raises(ValueError, match="SDP upper bound"):
+        audit_max_cut(
+            vertex_count=3,
+            edges=[(0, 1), (1, 2), (0, 2)],
+            left_vertices={0},
+            sdp_upper_bound=1.0,
+        )
+
+
+def test_finite_hierarchy_builds_primary_subtopic_and_complete_link_fibres():
+    hierarchy = stratify_representations(
+        {
+            "A": (0.00, 0.0),
+            "B": (0.04, 0.0),
+            "C": (0.08, 0.0),
+            "D": (1.00, 0.0),
+            "0xffff1000": (0.02, 0.0),
+        },
+        primary_threshold=0.20,
+        subtopic_threshold=0.05,
+        fibre_threshold=0.05,
+    )
+    assert hierarchy.admitted_labels == ("A", "B", "C", "D")
+    assert hierarchy.primary_topics == (("A", "B", "C"), ("D",))
+    # Threshold components keep the local A-B-C chain as one subtopic.
+    assert hierarchy.subtopics == (("A", "B", "C"), ("D",))
+    # Complete-link fibres cannot put A and C together because distance=.08>.05.
+    assert hierarchy.fibres == (("A", "B"), ("C",), ("D",))
+    for fibre in hierarchy.fibres:
+        for i, left in enumerate(fibre):
+            for right in fibre[i + 1:]:
+                assert math.dist(
+                    hierarchy.representations[left],
+                    hierarchy.representations[right],
+                ) <= hierarchy.fibre_threshold
+
+
+def test_finite_hierarchy_rejects_inverted_threshold_order():
+    with pytest.raises(ValueError, match="fibre <= subtopic <= primary"):
+        stratify_representations(
+            {"A": (0.0, 0.0), "B": (0.1, 0.0)},
+            primary_threshold=0.05,
+            subtopic_threshold=0.10,
+            fibre_threshold=0.01,
+        )
