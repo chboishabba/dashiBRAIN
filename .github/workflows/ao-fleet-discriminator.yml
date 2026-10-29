@@ -1,0 +1,25 @@
+name: AO fleet discriminator
+
+on:
+  pull_request:
+    paths:
+      - 'dashi/analysis/consumer_retention.py'
+      - 'tests/test_consumer_retention.py'
+      - 'docs/brainit_functional_quotient_roadmap.md'
+      - 'TODO.md'
+      - '.github/workflows/ao-fleet-discriminator.yml'
+  workflow_dispatch:
+
+jobs:
+  focused-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install pytest
+      - name: Compile
+        run: python -m py_compile dashi/analysis/consumer_retention.py tests/test_consumer_retention.py
+      - name: Focused tests
+        run: python -m pytest -q tests/test_consumer_retention.py
