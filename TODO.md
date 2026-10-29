@@ -51,3 +51,7 @@
 - [x] Keep optional SDP upper-bound receipts non-promoting.
 - [x] Preserve existing collision/retention and vertex-map renderer behavior.
 - [ ] Run focused tests and append the changelog only after implementation.
+
+- [ ] Construct primary topics from the declared primary-distance threshold graph.
+- [ ] Construct subtopics at the tighter local threshold inside primary topics.
+- [ ] Construct deterministic complete-link fibres at the tightest threshold.
