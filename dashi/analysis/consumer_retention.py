@@ -363,6 +363,155 @@ def _admitted_topic_labels(labels: Iterable[str]) -> tuple[str, ...]:
 
 
 @dataclass(frozen=True)
+class RepresentationHierarchyAudit:
+    """Finite threshold hierarchy over admitted representation labels."""
+
+    representations: Mapping[str, tuple[float, ...]]
+    admitted_labels: tuple[str, ...]
+    primary_topics: tuple[tuple[str, ...], ...]
+    subtopics: tuple[tuple[str, ...], ...]
+    fibres: tuple[tuple[str, ...], ...]
+    primary_threshold: float
+    subtopic_threshold: float
+    fibre_threshold: float
+
+
+def _representation_distance(
+    representations: Mapping[str, tuple[float, ...]],
+    left: str,
+    right: str,
+) -> float:
+    return math.dist(representations[left], representations[right])
+
+
+def _threshold_components(
+    labels: Sequence[str],
+    representations: Mapping[str, tuple[float, ...]],
+    threshold: float,
+) -> tuple[tuple[str, ...], ...]:
+    """Return deterministic connected components of a threshold graph."""
+    unseen = set(labels)
+    components: list[tuple[str, ...]] = []
+    for root in sorted(labels):
+        if root not in unseen:
+            continue
+        unseen.remove(root)
+        stack = [root]
+        component: list[str] = []
+        while stack:
+            current = stack.pop()
+            component.append(current)
+            neighbours = [
+                candidate
+                for candidate in sorted(unseen)
+                if _representation_distance(
+                    representations, current, candidate
+                ) <= threshold
+            ]
+            for candidate in neighbours:
+                unseen.remove(candidate)
+                stack.append(candidate)
+        components.append(tuple(sorted(component)))
+    return tuple(components)
+
+
+def _complete_link_fibres(
+    labels: Sequence[str],
+    representations: Mapping[str, tuple[float, ...]],
+    threshold: float,
+) -> tuple[tuple[str, ...], ...]:
+    """Build deterministic cliques whose every pair is within threshold."""
+    fibres: list[list[str]] = []
+    for label in sorted(labels):
+        placed = False
+        for fibre in fibres:
+            if all(
+                _representation_distance(representations, label, member)
+                <= threshold
+                for member in fibre
+            ):
+                fibre.append(label)
+                placed = True
+                break
+        if not placed:
+            fibres.append([label])
+    return tuple(tuple(fibre) for fibre in fibres)
+
+
+def stratify_representations(
+    representations: Mapping[str, Sequence[float]],
+    *,
+    primary_threshold: float,
+    subtopic_threshold: float,
+    fibre_threshold: float,
+) -> RepresentationHierarchyAudit:
+    """Construct primary topics, subtopics, and complete-link fibres.
+
+    Primary topics are connected components of the declared macro threshold
+    graph. Subtopics are connected components at the tighter local threshold
+    inside each primary topic. Fibres use complete-link admission at the
+    tightest threshold. Noise labels are removed before every construction.
+    """
+    thresholds = (
+        float(fibre_threshold),
+        float(subtopic_threshold),
+        float(primary_threshold),
+    )
+    if not all(math.isfinite(value) and value >= 0.0 for value in thresholds):
+        raise ValueError("hierarchy thresholds must be finite and nonnegative")
+    if not (thresholds[0] <= thresholds[1] <= thresholds[2]):
+        raise ValueError(
+            "hierarchy thresholds must satisfy fibre <= subtopic <= primary"
+        )
+
+    clean: dict[str, tuple[float, ...]] = {}
+    dimension: int | None = None
+    for label in sorted(representations):
+        if classify_topic_token(label) != "semantic_token":
+            continue
+        coords = tuple(float(value) for value in representations[label])
+        if not coords or not all(math.isfinite(value) for value in coords):
+            raise ValueError("representation coordinates must be finite")
+        if dimension is None:
+            dimension = len(coords)
+        elif len(coords) != dimension:
+            raise ValueError("all representations must have one dimension")
+        clean[label] = coords
+    if not clean:
+        raise ValueError("at least one semantic representation is required")
+
+    labels = tuple(sorted(clean))
+    primary_topics = _threshold_components(
+        labels, clean, thresholds[2]
+    )
+
+    subtopics_list: list[tuple[str, ...]] = []
+    fibres_list: list[tuple[str, ...]] = []
+    for primary in primary_topics:
+        local_subtopics = _threshold_components(
+            primary, clean, thresholds[1]
+        )
+        subtopics_list.extend(local_subtopics)
+        for subtopic in local_subtopics:
+            fibres_list.extend(
+                _complete_link_fibres(
+                    subtopic, clean, thresholds[0]
+                )
+            )
+
+    return RepresentationHierarchyAudit(
+        representations=clean,
+        admitted_labels=labels,
+        primary_topics=primary_topics,
+        subtopics=tuple(subtopics_list),
+        fibres=tuple(fibres_list),
+        primary_threshold=thresholds[2],
+        subtopic_threshold=thresholds[1],
+        fibre_threshold=thresholds[0],
+    )
+
+
+@dataclass(frozen=True)
 class SpectralStratificationAudit:
     """Finite runtime receipt for the golden five-level AO hierarchy."""
 
