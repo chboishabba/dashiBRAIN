@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Added Brain-IT cross-modal consumer-retention and exact finite commutation audits (toy diagnostics only), tests, and an evidence-gated roadmap; no real NSD or learned-model result asserted.
 - Added DASHI sprint documentation (`README`, formal axioms, dataset and gauge specs, sprint plan) and TODOs for sprint 1–2.
 - Scaffolded Python package structure (`dashi/`) with loaders, baseline residuals, valuation init, kernel operator/flow modules.
 - Added lightweight unit tests for kernel determinism and k-hop expansion.
